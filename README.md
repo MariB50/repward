@@ -11,8 +11,56 @@ recorded sets when you switch selection. Progress shows saved versus planned set
 saving the final planned set marks the exercise Complete and returns to the list.
 Completed exercises can be selected again to review their records.
 
-Records live in memory and reset on app reload. Previous-performance snapshots,
-the "Last time" display, timers, persistence, and notifications are later steps.
+The screen's records still live in memory and reset on app reload. A SQLite
+storage foundation now exists separately; connecting it to the screen follows
+its walkthrough. The "Last time" display, timers, and notifications are later steps.
+
+## SQLite foundation
+
+The storage has three tables:
+
+| Table | One row represents | Important fields |
+| --- | --- | --- |
+| `sessions` | One workout attempt | `id`, `ended_at` (NULL while active) |
+| `session_exercises` | One exercise in that attempt | Session/exercise IDs, copied name and planned set count, position |
+| `set_results` | One planned set | Session/exercise IDs, one-based set number, weight and reps |
+
+Each planned set gets a row immediately. Weight and reps are both NULL until
+recorded; numeric zero is a valid result. Exercise IDs match across sessions,
+while the combination of session ID, exercise ID and set number identifies a
+single set slot. Copies of the original exercise details keep later plan edits
+from changing the saved session.
+
+`openWorkoutStorage()` opens `repward.db` through Expo SQLite. Open it once and
+share the returned storage instance. It provides:
+
+- `createSession(sessionId, plan)`: insert the session, its exercise snapshots,
+  and every unfinished set row together. The caller supplies the session ID;
+  ID generation will be connected with the screen.
+- `saveSet(sessionId, exerciseId, setNumber, record)`: update one existing slot.
+  Set numbers start at 1; repeating a save targets the same row.
+- `finishSession(sessionId, exercises, endedAt?)`: flush all provided recorded
+  sets and write the end timestamp in one transaction. This supports early ends:
+  unfinished slots remain NULL, and an empty input slot cannot erase a previously
+  persisted set. The supplied exercises/set counts must match the original plan.
+  The end time defaults to now and is stored as UTC ISO text. Repeating a finished
+  session's final save preserves its original results and end time.
+- `close()`: finish queued operations and close the connection.
+
+A transaction either commits all of its writes or rolls them back. Errors reject
+the function's promise, leaving the caller responsible for showing the error and
+retaining inputs for Retry. End Workout must await `finishSession` before changing
+the screen to ended; that screen behavior is not implemented yet.
+
+All operations share a queue so their transactions cannot overlap. The connection
+is private to this storage instance and has foreign keys enabled. This uses
+Expo's same-connection `withTransactionAsync`; its exclusive transaction API opens
+another connection without inheriting that foreign-key setting.
+[Expo SDK 57 SQLite documentation](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/).
+
+This foundation does not yet load history into the screen, find "Last time," or
+resume an active workout after an app restart. Those remain later integration
+and design work.
 
 ## Run
 
@@ -30,9 +78,14 @@ Simulator. Installable iPhone development builds will be a later step.
 - `data/sampleWorkout.ts`: the types and example workout data.
 - `data/workoutSession.ts`: set objects, fresh workout arrays, input validation,
   progress counting, and immutable set updates.
+- `data/workoutStorage.ts`: SQLite tables, transaction queue, and storage functions.
+- `data/openWorkoutStorage.ts`: the small native Expo database-opening wrapper.
 - `App.tsx`: the screen, React state, input fields, button handlers, and styling.
 
 `tests/workoutSession.test.cjs` checks the state transitions and input edge cases.
+`tests/workoutStorage.test.cjs` runs the production storage functions and SQL
+against Node's real SQLite engine through a small adapter. It checks persistence,
+constraints, isolated session results, retry behavior and transaction rollback.
 
 The remaining setup files have supporting roles:
 
@@ -75,8 +128,9 @@ npx expo install --check
 npx expo export --platform ios --output-dir dist
 ```
 
-`npm test` uses Node's built-in test runner with TypeScript stripping. It was
-verified with Node 22.16.0; no additional testing dependency is needed.
+`npm test` uses Node's built-in test runner, SQLite and TypeScript stripping. It
+was verified with Node 22.16.0; no additional testing dependency is needed. Node
+22.16.0 reports experimental-feature notices for SQLite and TypeScript stripping.
 
 On an iPhone, verify that exercises are previews before starting, either exercise
 can be selected after starting, and then:
@@ -94,19 +148,24 @@ can be selected after starting, and then:
 ## Verification of this increment
 
 - TypeScript checking passed.
-- All four state/input tests passed: independent workout arrays, interleaved
-  exercise saves without mutation, zero-rep counting and completion limits, and
-  numeric input validation.
-- Expo dependency compatibility checking passed in the prior increment;
-  dependencies are unchanged in this step.
-- The iOS JavaScript/Hermes bundle export passed with temporary files redirected
+- All 15 tests passed: four existing state/input tests and eleven storage tests.
+  Storage checks include unfinished slots, snapshot independence, session
+  isolation, numeric validation and SQL constraints, create/set/final-save
+  failures and retries, finished-session protection, file close/reopen persistence,
+  queued operations, and refusing a newer database schema version.
+- `expo-sqlite` ~57.0.5 was installed for Expo SDK 57, with its config plugin.
+- The online Expo dependency check reported only the existing Expo package:
+  installed `57.0.29`, recommended `~57.0.33`. The command exited with status 1;
+  no framework upgrade was included in this storage increment.
+- The iOS JavaScript/Hermes bundle export passed in the prior increment, with temporary files redirected
   into `.expo/build-temp` inside the workspace. The initial sandboxed export
   could not write Hermes bytecode in the system temporary directory. This is a
-  bundle check, not a signed iPhone build or an on-device interaction test.
+  bundle check, not a signed iPhone build or an on-device interaction test. No new
+  bundle export was run for this storage-only step.
 - `git diff --check` passed.
-- Physical iPhone testing is still to be done.
+- The native Expo SQLite bridge has not been exercised on an iPhone. Node SQLite
+  tests verify the SQL/storage behavior, not native-device integration.
 
-The prior `npm audit` reported 22 dependency advisories (7 moderate, 15 high) in the installed
-Expo/React Native dependency tree. These need review before shipping. The audit's
-suggested forced changes include downgrading Expo/React Native; no forced
-framework changes were applied in this increment. The audit was not rerun for this step.
+The installation-time npm audit reported 12 dependency advisories (1 low,
+8 moderate, 3 high). No automatic dependency fixes or framework changes were
+applied, and no separate audit was run in this increment.
