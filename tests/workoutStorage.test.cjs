@@ -6,6 +6,7 @@ const path = require('node:path');
 const { sampleWorkout } = require('../data/sampleWorkout.ts');
 const { createWorkoutExercises } = require('../data/workoutSession.ts');
 const { createWorkoutStorage } = require('../data/workoutStorage.ts');
+const { createWorkoutStartup } = require('../data/workoutStartup.ts');
 
 // This adapter executes the production SQL in real SQLite. It only translates
 // Node's synchronous API to the small async Expo interface the storage uses.
@@ -286,4 +287,22 @@ test('initialization refuses a newer database version without creating tables', 
   assert.equal((await db.getFirstAsync(
     "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
   )).count, 0);
+});
+
+test('startup creates exactly one real SQLite session with its original unfinished slots', async (t) => {
+  const { db, storage } = await fixture(t);
+  const startup = createWorkoutStartup(async () => storage, () => 'startup-session');
+  t.after(() => startup.close());
+  await startup.prepare();
+  assert.equal((await db.getFirstAsync('SELECT COUNT(*) AS count FROM sessions')).count, 0);
+
+  const ids = await Promise.all([startup.start(sampleWorkout), startup.start(sampleWorkout)]);
+  assert.deepEqual(ids, ['startup-session', 'startup-session']);
+  assert.deepEqual(await db.getAllAsync('SELECT * FROM sessions'), [
+    { id: 'startup-session', ended_at: null },
+  ]);
+  assert.equal((await db.getFirstAsync('SELECT COUNT(*) AS count FROM session_exercises')).count, 2);
+  assert.equal((await db.getFirstAsync(
+    'SELECT COUNT(*) AS count FROM set_results WHERE weight IS NULL AND reps IS NULL',
+  )).count, 4);
 });

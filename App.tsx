@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { randomUUID } from 'expo-crypto';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { sampleWorkout } from './data/sampleWorkout';
+import { openWorkoutStorage } from './data/openWorkoutStorage';
+import { createWorkoutStartup, type WorkoutStartup } from './data/workoutStartup';
 import {
   completedSetCount,
   createWorkoutExercises,
@@ -12,13 +15,49 @@ import {
 } from './data/workoutSession';
 
 export default function App() {
-  const scrollView = useRef<ScrollView>(null);
-  const [workoutStarted, setWorkoutStarted] = useState(false);
+  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
+  const startupRef = useRef<WorkoutStartup | null>(null);
+  const storageClosing = useRef<Promise<void>>(Promise.resolve());
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
   const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
   const [exercises, setExercises] = useState(() => createWorkoutExercises(sampleWorkout));
   const [weightInput, setWeightInput] = useState('');
   const [repsInput, setRepsInput] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
+  const workoutStarted = sessionId !== null;
+
+  const getStartup = useCallback(() => {
+    if (!startupRef.current) {
+      const previousClose = storageClosing.current;
+      startupRef.current = createWorkoutStartup(async () => {
+        // A replacement screen/effect waits for the old connection to close.
+        await previousClose;
+        return openWorkoutStorage();
+      }, randomUUID);
+    }
+    return startupRef.current;
+  }, []);
+
+  useEffect(() => {
+    // A replacement effect cancels any old pending start. Preserve loading if a
+    // user already started through this same coordinator before the effect ran.
+    if (startupRef.current === null) setIsStarting(false);
+    const startup = getStartup();
+    void startup.prepare().catch(() => {
+      if (startupRef.current === startup) {
+        setStartError('Couldn’t prepare your workout. Please try again.');
+      }
+    });
+
+    return () => {
+      if (startupRef.current === startup) startupRef.current = null;
+      storageClosing.current = startup.close().catch((error) => {
+        console.warn('Could not close workout storage.', error);
+      });
+    };
+  }, [getStartup]);
 
   const selectedExercise = exercises.find(
     (exercise) => exercise.id === selectedExerciseId,
@@ -33,11 +72,26 @@ export default function App() {
     setInputError(null);
   }
 
-  function startWorkout() {
-    setExercises(createWorkoutExercises(sampleWorkout));
-    setSelectedExerciseId(null);
-    clearInputs();
-    setWorkoutStarted(true);
+  async function startWorkout() {
+    if (workoutStarted || isStarting) return;
+    const startup = getStartup();
+    setIsStarting(true);
+    setStartError(null);
+
+    try {
+      const id = await startup.start(sampleWorkout);
+      if (startupRef.current !== startup) return;
+      setExercises(createWorkoutExercises(sampleWorkout));
+      setSelectedExerciseId(null);
+      clearInputs();
+      setSessionId(id);
+    } catch {
+      if (startupRef.current === startup) {
+        setStartError('Couldn’t start your workout. Please try again.');
+      }
+    } finally {
+      if (startupRef.current === startup) setIsStarting(false);
+    }
   }
 
   function selectExercise(exerciseId: string) {
@@ -85,13 +139,25 @@ export default function App() {
             </Text>
 
             {!workoutStarted && (
-              <Pressable
-                accessibilityRole="button"
-                onPress={startWorkout}
-                style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
-              >
-                <Text style={styles.startButtonText}>Start Workout</Text>
-              </Pressable>
+              <View>
+                {startError && (
+                  <Text style={styles.startError} accessibilityRole="alert">{startError}</Text>
+                )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: isStarting, busy: isStarting }}
+                  disabled={isStarting}
+                  onPress={startWorkout}
+                  style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
+                >
+                  <View style={styles.startButtonContent} accessibilityLiveRegion="polite">
+                    {isStarting && <ActivityIndicator color="#FFFFFF" />}
+                    <Text style={styles.startButtonText}>
+                      {isStarting ? 'Starting workout…' : startError ? 'Retry' : 'Start Workout'}
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
             )}
 
             <Text style={styles.sectionTitle}>
@@ -213,6 +279,8 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   startButtonText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
+  startButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  startError: { fontSize: 16, lineHeight: 24, color: '#9C2727', marginTop: 16 },
   pressed: { opacity: 0.75 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#18291E', marginTop: 32, marginBottom: 16 },
   exercise: {

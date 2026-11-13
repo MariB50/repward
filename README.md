@@ -11,9 +11,39 @@ recorded sets when you switch selection. Progress shows saved versus planned set
 saving the final planned set marks the exercise Complete and returns to the list.
 Completed exercises can be selected again to review their records.
 
-The screen's records still live in memory and reset on app reload. A SQLite
-storage foundation now exists separately; connecting it to the screen follows
-its walkthrough. The "Last time" display, timers, and notifications are later steps.
+SQLite prepares while the workout preview is visible. Start Workout shows a
+spinner while preparation and session creation finish, then enables the workout.
+Failures leave the preview visible with an error and Retry. Repeated taps share
+one start attempt, so they cannot create duplicate sessions.
+
+Starting now persists a session and its unfinished set rows. Save Set still
+updates only React state in this increment; entered weights/reps reset on reload.
+Connecting per-set saves and End Workout comes next. Loading prior sessions,
+the "Last time" display, timers, and notifications are later steps.
+
+## Startup integration
+
+`App.tsx` prepares storage in an effect when the screen opens. Preparation does
+not create a session and does not disable Start. If Start is tapped before the
+database is ready, its loading state covers the remaining preparation and the
+session creation. The app sets its current session ID only after creation succeeds;
+the presence of that ID determines whether the workout has started.
+
+`data/workoutStartup.ts` coordinates this flow:
+
+- `prepare()` shares one database-opening promise. A successful connection stays
+  available; failed preparation can be retried.
+- `start(plan)` waits for preparation, generates a UUID using `expo-crypto`, and
+  creates the session. Concurrent calls share one attempt. A failed creation can
+  retry using the ready connection; an already-started session is not recreated.
+- `close()` prevents late startup success, waits for in-flight work and closes
+  the connection. The screen ignores results from an old coordinator after
+  cleanup. Replacement effects wait for the old connection to close, including
+  React development-mode setup/cleanup cycles.
+
+On error, the Start area returns to an enabled Retry button and retains the
+workout preview. While starting, the button shows a spinner and is disabled;
+the coordinator also protects against taps arriving before the screen rerenders.
 
 ## SQLite foundation
 
@@ -35,8 +65,8 @@ from changing the saved session.
 share the returned storage instance. It provides:
 
 - `createSession(sessionId, plan)`: insert the session, its exercise snapshots,
-  and every unfinished set row together. The caller supplies the session ID;
-  ID generation will be connected with the screen.
+  and every unfinished set row together. The startup coordinator supplies the
+  UUID session ID when Start Workout is tapped.
 - `saveSet(sessionId, exerciseId, setNumber, record)`: update one existing slot.
   Set numbers start at 1; repeating a save targets the same row.
 - `finishSession(sessionId, exercises, endedAt?)`: flush all provided recorded
@@ -56,7 +86,7 @@ All operations share a queue so their transactions cannot overlap. The connectio
 is private to this storage instance and has foreign keys enabled. This uses
 Expo's same-connection `withTransactionAsync`; its exclusive transaction API opens
 another connection without inheriting that foreign-key setting.
-[Expo SDK 57 SQLite documentation](https://docs.expo.dev/versions/v57.0.0/sdk/sqlite/).
+[Expo SDK 58 SQLite documentation](https://docs.expo.dev/versions/v58.0.0/sdk/sqlite/).
 
 This foundation does not yet load history into the screen, find "Last time," or
 resume an active workout after an app restart. Those remain later integration
@@ -80,12 +110,17 @@ Simulator. Installable iPhone development builds will be a later step.
   progress counting, and immutable set updates.
 - `data/workoutStorage.ts`: SQLite tables, transaction queue, and storage functions.
 - `data/openWorkoutStorage.ts`: the small native Expo database-opening wrapper.
+- `data/workoutStartup.ts`: shared preparation, session creation, retry and
+  cleanup coordination; accepts injected storage/ID functions for tests.
 - `App.tsx`: the screen, React state, input fields, button handlers, and styling.
 
 `tests/workoutSession.test.cjs` checks the state transitions and input edge cases.
 `tests/workoutStorage.test.cjs` runs the production storage functions and SQL
 against Node's real SQLite engine through a small adapter. It checks persistence,
 constraints, isolated session results, retry behavior and transaction rollback.
+`tests/workoutStartup.test.cjs` controls delayed preparation/writes and failures
+to check waiting, shared attempts, retry and cleanup. The storage suite also
+connects startup to a real SQLite database and verifies exactly one session.
 
 The remaining setup files have supporting roles:
 
@@ -100,7 +135,10 @@ The remaining setup files have supporting roles:
 1. `sampleWorkout` supplies exercise names and planned set counts.
 2. `createWorkoutExercises` copies those exercises and gives each a `sets` array
    containing exactly `plannedSets` null slots. The static plan is unchanged.
-3. Start Workout initializes fresh exercise state and enables selection.
+3. The screen starts preparing SQLite on mount. Start Workout shows loading,
+   waits for storage, generates a session UUID and creates its original planned
+   set rows. Only successful creation initializes exercise state and enables
+   selection. Preparation/creation errors return to the preview with Retry.
 4. Selecting an exercise stores its ID. The screen finds its current records in
    `exercises`, rather than reading records from the static plan.
 5. The inputs hold text in React state. Save Set uses `parseSetRecord` to validate
@@ -132,8 +170,13 @@ npx expo export --platform ios --output-dir dist
 was verified with Node 22.16.0; no additional testing dependency is needed. Node
 22.16.0 reports experimental-feature notices for SQLite and TypeScript stripping.
 
-On an iPhone, verify that exercises are previews before starting, either exercise
-can be selected after starting, and then:
+On an iPhone, verify that the preview remains visible during early preparation.
+Tap Start and check the loading state, then exercise selection after success.
+Rapid repeated Start taps should create only one session. The automated SQLite
+integration test checks its two exercise snapshots and four unfinished set rows.
+Set values in SQLite remain NULL while Save Set integration is pending.
+
+Then check the existing in-memory logging flow:
 
 1. Save 50 lb and 10 reps for Bench press; check 1 of 2 sets completed.
 2. Switch to Seated row, save 40 lb and 8 reps, then return to Bench press.
@@ -148,24 +191,19 @@ can be selected after starting, and then:
 ## Verification of this increment
 
 - TypeScript checking passed.
-- All 15 tests passed: four existing state/input tests and eleven storage tests.
-  Storage checks include unfinished slots, snapshot independence, session
-  isolation, numeric validation and SQL constraints, create/set/final-save
-  failures and retries, finished-session protection, file close/reopen persistence,
-  queued operations, and refusing a newer database schema version.
-- `expo-sqlite` ~57.0.5 was installed for Expo SDK 57, with its config plugin.
-- The online Expo dependency check reported only the existing Expo package:
-  installed `57.0.29`, recommended `~57.0.33`. The command exited with status 1;
-  no framework upgrade was included in this storage increment.
-- The iOS JavaScript/Hermes bundle export passed in the prior increment, with temporary files redirected
-  into `.expo/build-temp` inside the workspace. The initial sandboxed export
-  could not write Hermes bytecode in the system temporary directory. This is a
-  bundle check, not a signed iPhone build or an on-device interaction test. No new
-  bundle export was run for this storage-only step.
+- All 25 tests passed: four state/input tests, twelve real SQLite storage tests,
+  and nine asynchronous startup tests. New checks cover early preparation,
+  waiting for creation, duplicate Starts, failures/retries, cleanup during
+  pending operations, and exactly one real session with unfinished set rows.
+- `expo-crypto` ~58.0.8 was added to the existing Expo 58 checkout for UUIDs.
+  Expo dependency compatibility checking passed.
+- The ScrollView ref type was adjusted for the current React Native 0.88 types.
+- The iOS JavaScript/Hermes bundle export passed with temporary files redirected
+  into `.expo/build-temp`. This verifies bundling, not signed-device execution.
 - `git diff --check` passed.
 - The native Expo SQLite bridge has not been exercised on an iPhone. Node SQLite
   tests verify the SQL/storage behavior, not native-device integration.
 
-The installation-time npm audit reported 12 dependency advisories (1 low,
-8 moderate, 3 high). No automatic dependency fixes or framework changes were
-applied, and no separate audit was run in this increment.
+The installation-time npm audit reported three moderate dependency advisories.
+No automatic dependency fixes or framework upgrades were applied in this
+startup increment; the existing Expo 58 upgrade was preserved.
