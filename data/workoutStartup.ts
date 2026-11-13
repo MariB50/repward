@@ -1,7 +1,7 @@
 import type { WorkoutPlan } from './sampleWorkout';
 import type { createWorkoutStorage } from './workoutStorage';
 
-type StartupStorage = Pick<Awaited<ReturnType<typeof createWorkoutStorage>>, 'createSession' | 'close'>;
+type StartupStorage = Pick<Awaited<ReturnType<typeof createWorkoutStorage>>, 'createSession' | 'saveSet' | 'close'>;
 
 /** Coordinate one screen's preparation and first workout, independently of React. */
 export function createWorkoutStartup(

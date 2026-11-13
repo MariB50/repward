@@ -16,10 +16,14 @@ spinner while preparation and session creation finish, then enables the workout.
 Failures leave the preview visible with an error and Retry. Repeated taps share
 one start attempt, so they cannot create duplicate sessions.
 
-Starting now persists a session and its unfinished set rows. Save Set still
-updates only React state in this increment; entered weights/reps reset on reload.
-Connecting per-set saves and End Workout comes next. Loading prior sessions,
+Start persists a session and its unfinished set rows. Save Set now persists each
+entered result before updating progress or clearing inputs. Failed writes retain
+the current values with Retry. End Workout integration, loading prior sessions,
 the "Last time" display, timers, and notifications are later steps.
+
+Saved database rows survive reload, but the screen does not yet read or resume
+those sessions. Reloading still resets the visible workout. Values awaiting a
+successful write are held only in memory.
 
 ## Startup integration
 
@@ -44,6 +48,35 @@ the presence of that ID determines whether the workout has started.
 On error, the Start area returns to an enabled Retry button and retains the
 workout preview. While starting, the button shows a spinner and is disabled;
 the coordinator also protects against taps arriving before the screen rerenders.
+
+## Save Set integration
+
+The screen validates the input, captures the current session ID, exercise ID,
+one-based set number and numeric weight/reps, then passes them to
+`data/workoutSetSaver.ts`. The saver writes through the same prepared storage
+connection. It retains one pending record until its write succeeds.
+
+- While saving, the button shows Saving and a spinner. Inputs and exercise
+  selection stay fixed. A synchronous coordinator guard also blocks duplicate
+  submissions before the button has rerendered.
+- Recognized SQLite BUSY contention gets at most two automatic retries after
+  100 ms and 200 ms pauses. Other errors surface immediately. These delays do
+  not guarantee a maximum total native write time.
+- A failed save keeps the set values and progress unchanged, shows an inline
+  error and enables Retry. Retry reuses the captured record and the same set
+  row; values do not need re-entry. Inputs and exercise changes remain held
+  until that pending set succeeds.
+- Only a successful save updates React's recorded sets, clears the form and,
+  for the final planned set, returns to the exercise list with Complete.
+
+The error classifier recognizes numeric SQLite BUSY codes (including extended
+codes) and the native error format exposed by Expo. It does not automatically
+retry unknown, constraint, full-disk or SQLITE_LOCKED errors.
+[SQLite result codes](https://www.sqlite.org/rescode.html#busy).
+
+Cleanup stops further retries, waits for an in-flight write, and then closes
+storage. Stale results cannot update an unmounted screen. This is foreground
+retry handling; restart recovery for an unpersisted set is not implemented.
 
 ## SQLite foundation
 
@@ -112,6 +145,8 @@ Simulator. Installable iPhone development builds will be a later step.
 - `data/openWorkoutStorage.ts`: the small native Expo database-opening wrapper.
 - `data/workoutStartup.ts`: shared preparation, session creation, retry and
   cleanup coordination; accepts injected storage/ID functions for tests.
+- `data/workoutSetSaver.ts`: one retained set, duplicate protection, bounded
+  temporary-contention retries and cleanup.
 - `App.tsx`: the screen, React state, input fields, button handlers, and styling.
 
 `tests/workoutSession.test.cjs` checks the state transitions and input edge cases.
@@ -121,6 +156,10 @@ constraints, isolated session results, retry behavior and transaction rollback.
 `tests/workoutStartup.test.cjs` controls delayed preparation/writes and failures
 to check waiting, shared attempts, retry and cleanup. The storage suite also
 connects startup to a real SQLite database and verifies exactly one session.
+`tests/workoutSetSaver.test.cjs` checks retained snapshots, retry limits and
+classification, manual retry, duplicates and cleanup. Storage integration tests
+verify completion follows persistence and exercise a real two-connection writer
+lock that clears on automatic retry.
 
 The remaining setup files have supporting roles:
 
@@ -145,16 +184,19 @@ The remaining setup files have supporting roles:
    and convert that text into a `{ weight, reps }` object. Blanks and negative or
    invalid values show an error; zero is valid, weights may contain decimals,
    and reps must be whole numbers.
-6. `setExercises(current => recordSet(...))` fills the chosen exercise's first
-   null slot. `recordSet` creates a new array and a replacement exercise object,
-   preserving earlier state and all other exercise records.
+6. The set saver retains those values and their exact session/exercise/set key.
+   It writes to SQLite, with brief retries for recognized temporary contention.
+   Pending/failure states leave inputs and progress in place. Only success calls
+   `setExercises(current => recordSet(...))` to fill the first null slot.
+   `recordSet` creates replacement state, preserving all other exercise records.
 7. React renders again. `completedSetCount` counts non-null entries, so a saved
    zero-rep set counts but an unused slot does not.
 8. Saving the last required set clears selection and scrolls back to the exercise
    list. Complete is derived from the saved count, not a separate state flag.
 
-Unsaved input text clears when selecting an exercise or after a successful save;
-saved sets remain attached to their exercise. A completed exercise has no further
+Input text clears when freely selecting an exercise or after a successful save.
+Selection is held while a set awaits persistence, including after a failed save.
+Recorded sets remain attached to their exercise. A completed exercise has no further
 Save Set form, so records cannot exceed its planned set count in this increment.
 
 ## Check
@@ -174,36 +216,42 @@ On an iPhone, verify that the preview remains visible during early preparation.
 Tap Start and check the loading state, then exercise selection after success.
 Rapid repeated Start taps should create only one session. The automated SQLite
 integration test checks its two exercise snapshots and four unfinished set rows.
-Set values in SQLite remain NULL while Save Set integration is pending.
+Saving a set should now update exactly one of its original SQLite rows.
 
-Then check the existing in-memory logging flow:
+Then check the logging flow:
 
-1. Save 50 lb and 10 reps for Bench press; check 1 of 2 sets completed.
+1. Save 50 lb and 10 reps for Bench press. Check the Saving state, followed by
+   1 of 2 sets completed and cleared inputs after success.
 2. Switch to Seated row, save 40 lb and 8 reps, then return to Bench press.
    Its original set should still be visible.
 3. Try a blank field, negative weight, or fractional reps; verify no set is saved.
    Save 0 lb and 0 reps if desired; they are valid recorded values.
 4. Save the final Bench press set; verify the list is shown with Complete.
 5. Select that completed exercise to review its sets; verify no extra set can be added.
-6. Finish the remaining exercise and check All exercises complete. Reload the app
-   to confirm all in-memory records reset.
+6. Finish the remaining exercise and check All exercises complete. Reload resets
+   the visible workout; database rows remain saved but are not yet loaded into UI.
+
+The automated tests inject failures to verify retained values/manual retry and
+use actual SQLite contention to verify automatic retry. No failure injection
+controls are shipped in the app. New Save Set behavior and latency still need
+an iPhone interaction check.
 
 ## Verification of this increment
 
 - TypeScript checking passed.
-- All 25 tests passed: four state/input tests, twelve real SQLite storage tests,
-  and nine asynchronous startup tests. New checks cover early preparation,
-  waiting for creation, duplicate Starts, failures/retries, cleanup during
-  pending operations, and exactly one real session with unfinished set rows.
-- `expo-crypto` ~58.0.8 was added to the existing Expo 58 checkout for UUIDs.
-  Expo dependency compatibility checking passed.
-- The ScrollView ref type was adjusted for the current React Native 0.88 types.
+- All 36 tests passed: four state/input tests, fourteen real SQLite storage
+  tests, nine startup tests and nine set-saver tests. New checks cover retained
+  values, waiting for persistence, retry success/exhaustion, native error formats,
+  manual retry, duplicate submissions, cleanup and a real SQLite writer lock.
+- No dependency or schema changes were made in this Save Set increment. Expo
+  dependency compatibility passed in the preceding startup increment.
 - The iOS JavaScript/Hermes bundle export passed with temporary files redirected
   into `.expo/build-temp`. This verifies bundling, not signed-device execution.
 - `git diff --check` passed.
-- The native Expo SQLite bridge has not been exercised on an iPhone. Node SQLite
-  tests verify the SQL/storage behavior, not native-device integration.
+- The user reports testing the startup flow on an iPhone. The newly connected
+  Save Set retry flow has not yet been device-tested or timed; automated tests
+  use Node SQLite and controlled promises, not a mounted React Native screen.
 
-The installation-time npm audit reported three moderate dependency advisories.
-No automatic dependency fixes or framework upgrades were applied in this
-startup increment; the existing Expo 58 upgrade was preserved.
+The preceding installation-time npm audit reported three moderate dependency
+advisories. No audit, automatic fixes or framework upgrades were performed in
+this Save Set increment.

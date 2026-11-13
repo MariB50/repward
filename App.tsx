@@ -7,6 +7,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { sampleWorkout } from './data/sampleWorkout';
 import { openWorkoutStorage } from './data/openWorkoutStorage';
 import { createWorkoutStartup, type WorkoutStartup } from './data/workoutStartup';
+import { createWorkoutSetSaver, type WorkoutSetSaver } from './data/workoutSetSaver';
 import {
   completedSetCount,
   createWorkoutExercises,
@@ -17,6 +18,7 @@ import {
 export default function App() {
   const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
   const startupRef = useRef<WorkoutStartup | null>(null);
+  const setSaverRef = useRef<WorkoutSetSaver | null>(null);
   const storageClosing = useRef<Promise<void>>(Promise.resolve());
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
@@ -26,7 +28,10 @@ export default function App() {
   const [weightInput, setWeightInput] = useState('');
   const [repsInput, setRepsInput] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
+  const [isSavingSet, setIsSavingSet] = useState(false);
+  const [setSaveError, setSetSaveError] = useState<string | null>(null);
   const workoutStarted = sessionId !== null;
+  const setSaveLocked = isSavingSet || setSaveError !== null;
 
   const getStartup = useCallback(() => {
     if (!startupRef.current) {
@@ -40,10 +45,25 @@ export default function App() {
     return startupRef.current;
   }, []);
 
+  const getSetSaver = useCallback(() => {
+    if (!setSaverRef.current) {
+      const startup = getStartup();
+      setSaverRef.current = createWorkoutSetSaver(async (request) => {
+        const storage = await startup.prepare();
+        await storage.saveSet(request.sessionId, request.exerciseId, request.setNumber, request.record);
+      });
+    }
+    return setSaverRef.current;
+  }, [getStartup]);
+
   useEffect(() => {
     // A replacement effect cancels any old pending start. Preserve loading if a
     // user already started through this same coordinator before the effect ran.
-    if (startupRef.current === null) setIsStarting(false);
+    if (startupRef.current === null) {
+      setIsStarting(false);
+      setIsSavingSet(false);
+      setSetSaveError(null);
+    }
     const startup = getStartup();
     void startup.prepare().catch(() => {
       if (startupRef.current === startup) {
@@ -52,8 +72,14 @@ export default function App() {
     });
 
     return () => {
+      const setSaver = setSaverRef.current;
+      setSaverRef.current = null;
       if (startupRef.current === startup) startupRef.current = null;
-      storageClosing.current = startup.close().catch((error) => {
+      storageClosing.current = (async () => {
+        // Stop set retries and finish any native write before closing SQLite.
+        await setSaver?.close();
+        await startup.close();
+      })().catch((error) => {
         console.warn('Could not close workout storage.', error);
       });
     };
@@ -95,27 +121,51 @@ export default function App() {
   }
 
   function selectExercise(exerciseId: string) {
+    if (setSaverRef.current?.hasPending()) return;
     setSelectedExerciseId(exerciseId);
     clearInputs();
   }
 
-  function saveSet() {
-    if (!selectedExercise || completedSetCount(selectedExercise) === selectedExercise.plannedSets) {
+  async function saveSet() {
+    if (!sessionId || !selectedExercise
+      || completedSetCount(selectedExercise) === selectedExercise.plannedSets) {
       return;
     }
 
-    const record = parseSetRecord(weightInput, repsInput);
-    if (!record) {
+    const saver = getSetSaver();
+    // This also catches rapid taps before the disabled button has rerendered.
+    if (saver.isSaving()) return;
+    const retrying = saver.hasPending();
+    const record = retrying ? null : parseSetRecord(weightInput, repsInput);
+    if (!retrying && !record) {
       setInputError('Enter a weight of 0 or more and a whole-number rep count of 0 or more.');
       return;
     }
 
-    setExercises((current) => recordSet(current, selectedExercise.id, record));
-    clearInputs();
+    setIsSavingSet(true);
+    setSetSaveError(null);
+    setInputError(null);
+    try {
+      const saved = await (retrying ? saver.retry() : saver.save({
+        sessionId,
+        exerciseId: selectedExercise.id,
+        setNumber: selectedExercise.sets.findIndex((set) => set === null) + 1,
+        record: record!,
+      }));
+      if (setSaverRef.current !== saver) return;
+      setExercises((current) => recordSet(current, saved.exerciseId, saved.record));
+      clearInputs();
 
-    if (completedSetCount(selectedExercise) + 1 === selectedExercise.plannedSets) {
-      setSelectedExerciseId(null);
-      scrollView.current?.scrollTo({ y: 0, animated: true });
+      if (saved.setNumber === selectedExercise.plannedSets) {
+        setSelectedExerciseId(null);
+        scrollView.current?.scrollTo({ y: 0, animated: true });
+      }
+    } catch {
+      if (setSaverRef.current === saver) {
+        setSetSaveError('Couldn’t save this set. Your values are still here. Please retry.');
+      }
+    } finally {
+      if (setSaverRef.current === saver) setIsSavingSet(false);
     }
   }
 
@@ -173,8 +223,8 @@ export default function App() {
                   key={exercise.id}
                   accessibilityRole="button"
                   accessibilityLabel={`${exercise.name}, ${savedSets} of ${exercise.plannedSets} sets completed${isComplete ? ', Complete' : ''}`}
-                  accessibilityState={{ disabled: !workoutStarted, selected: isSelected }}
-                  disabled={!workoutStarted}
+                  accessibilityState={{ disabled: !workoutStarted || setSaveLocked, selected: isSelected }}
+                  disabled={!workoutStarted || setSaveLocked}
                   onPress={() => selectExercise(exercise.id)}
                   style={({ pressed }) => [
                     styles.exercise,
@@ -223,7 +273,10 @@ export default function App() {
                           style={styles.input}
                           keyboardType="decimal-pad"
                           value={weightInput}
-                          onChangeText={setWeightInput}
+                          editable={!setSaveLocked}
+                          onChangeText={(value) => {
+                            if (!setSaverRef.current?.hasPending()) setWeightInput(value);
+                          }}
                           placeholder="e.g. 50"
                           placeholderTextColor="#65756A"
                         />
@@ -233,19 +286,32 @@ export default function App() {
                           style={styles.input}
                           keyboardType="number-pad"
                           value={repsInput}
-                          onChangeText={setRepsInput}
+                          editable={!setSaveLocked}
+                          onChangeText={(value) => {
+                            if (!setSaverRef.current?.hasPending()) setRepsInput(value);
+                          }}
                           placeholder="e.g. 10"
                           placeholderTextColor="#65756A"
                         />
                         {inputError && (
                           <Text style={styles.inputError} accessibilityRole="alert">{inputError}</Text>
                         )}
+                        {setSaveError && (
+                          <Text style={styles.inputError} accessibilityRole="alert">{setSaveError}</Text>
+                        )}
                         <Pressable
                           accessibilityRole="button"
+                          accessibilityState={{ disabled: isSavingSet, busy: isSavingSet }}
+                          disabled={isSavingSet}
                           onPress={saveSet}
                           style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
                         >
-                          <Text style={styles.startButtonText}>Save Set</Text>
+                          <View style={styles.startButtonContent} accessibilityLiveRegion="polite">
+                            {isSavingSet && <ActivityIndicator color="#FFFFFF" />}
+                            <Text style={styles.startButtonText}>
+                              {isSavingSet ? 'Saving…' : setSaveError ? 'Retry' : 'Save Set'}
+                            </Text>
+                          </View>
                         </Pressable>
                       </View>
                     ) : (

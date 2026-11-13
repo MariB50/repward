@@ -4,9 +4,10 @@ const { DatabaseSync } = require('node:sqlite');
 const { mkdirSync, mkdtempSync, rmSync } = require('node:fs');
 const path = require('node:path');
 const { sampleWorkout } = require('../data/sampleWorkout.ts');
-const { createWorkoutExercises } = require('../data/workoutSession.ts');
+const { completedSetCount, createWorkoutExercises, recordSet } = require('../data/workoutSession.ts');
 const { createWorkoutStorage } = require('../data/workoutStorage.ts');
 const { createWorkoutStartup } = require('../data/workoutStartup.ts');
+const { createWorkoutSetSaver } = require('../data/workoutSetSaver.ts');
 
 // This adapter executes the production SQL in real SQLite. It only translates
 // Node's synchronous API to the small async Expo interface the storage uses.
@@ -305,4 +306,77 @@ test('startup creates exactly one real SQLite session with its original unfinish
   assert.equal((await db.getFirstAsync(
     'SELECT COUNT(*) AS count FROM set_results WHERE weight IS NULL AND reps IS NULL',
   )).count, 4);
+});
+
+test('per-set integration persists zero and final sets before updating completion', async (t) => {
+  const { db, storage } = await fixture(t);
+  const startup = createWorkoutStartup(async () => storage, () => 'saving-session');
+  t.after(() => startup.close());
+  const sessionId = await startup.start(sampleWorkout);
+  const saver = createWorkoutSetSaver(async (request) => {
+    const ready = await startup.prepare();
+    await ready.saveSet(request.sessionId, request.exerciseId, request.setNumber, request.record);
+  });
+  t.after(() => saver.close());
+  let exercises = createWorkoutExercises(sampleWorkout);
+  for (const [index, record] of [{ weight: 0, reps: 0 }, { weight: 50, reps: 10 }].entries()) {
+    const saving = saver.save({ sessionId, exerciseId: 'bench-press', setNumber: index + 1, record });
+    assert.equal(completedSetCount(exercises[0]), index);
+    const saved = await saving;
+    assert.deepEqual(await db.getFirstAsync(
+      'SELECT weight, reps FROM set_results WHERE session_id = ? AND exercise_id = ? AND set_number = ?',
+      sessionId, saved.exerciseId, saved.setNumber,
+    ), record);
+    exercises = recordSet(exercises, saved.exerciseId, saved.record);
+    assert.equal(completedSetCount(exercises[0]), index + 1);
+  }
+  assert.equal(completedSetCount(exercises[0]), exercises[0].plannedSets);
+  assert.equal((await db.getFirstAsync(
+    "SELECT COUNT(*) AS count FROM set_results WHERE exercise_id = 'seated-row' AND weight IS NULL",
+  )).count, 2);
+  assert.equal((await db.getFirstAsync('SELECT ended_at FROM sessions')).ended_at, null);
+});
+
+test('a real SQLite writer lock can clear on automatic retry without duplicating the set', async (t) => {
+  const temporaryRoot = path.resolve(__dirname, '../.expo');
+  mkdirSync(temporaryRoot, { recursive: true });
+  const directory = mkdtempSync(path.join(temporaryRoot, 'set-save-test-'));
+  let storage;
+  let blocker;
+  let saver;
+  t.after(async () => {
+    if (saver) await saver.close();
+    if (blocker) blocker.close();
+    if (storage) await storage.close();
+    assert.ok(path.resolve(directory).startsWith(temporaryRoot + path.sep));
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const filename = path.join(directory, 'history.db');
+  const db = adaptDatabase(new DatabaseSync(filename));
+  storage = await createWorkoutStorage(db);
+  await storage.createSession('locked-session', sampleWorkout);
+  blocker = new DatabaseSync(filename);
+  blocker.exec('BEGIN IMMEDIATE');
+
+  const pauses = [];
+  saver = createWorkoutSetSaver(async (request) => {
+    await storage.saveSet(request.sessionId, request.exerciseId, request.setNumber, request.record);
+  }, async (milliseconds) => {
+    pauses.push(milliseconds);
+    assert.equal((await db.getFirstAsync(
+      'SELECT COUNT(*) AS count FROM set_results WHERE weight IS NOT NULL',
+    )).count, 0);
+    blocker.exec('ROLLBACK');
+  });
+  const request = {
+    sessionId: 'locked-session', exerciseId: 'bench-press', setNumber: 1,
+    record: { weight: 50, reps: 10 },
+  };
+  assert.deepEqual(await saver.save(request), request);
+  assert.deepEqual(pauses, [100]);
+  assert.equal((await db.getFirstAsync('SELECT COUNT(*) AS count FROM set_results')).count, 4);
+  assert.deepEqual(await db.getFirstAsync(
+    'SELECT weight, reps FROM set_results WHERE session_id = ? AND exercise_id = ? AND set_number = 1',
+    request.sessionId, request.exerciseId,
+  ), request.record);
 });
