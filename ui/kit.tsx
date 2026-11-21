@@ -12,14 +12,14 @@ import {
 import Svg, { Path } from 'react-native-svg';
 
 export const c = {
-  bg: '#F7F8F3',
+  bg: '#F6F7FA',
   white: '#FFFFFF',
-  ink: '#18291E',
-  mute: '#536454',
-  faint: '#E1E5DC',
-  blue: '#254937',
-  pale: '#EEF4EB',
-  navy: '#254937',
+  ink: '#121A2D',
+  mute: '#59667B',
+  faint: '#E1E5ED',
+  blue: '#284FE5',
+  pale: '#EDF1FF',
+  navy: '#111B35',
   green: '#19734F',
   danger: '#A03532',
 };
@@ -68,7 +68,14 @@ export function Icon({
   );
 }
 export function Brand() {
-  return <Text style={{ fontSize: 22, fontWeight: '800', color: c.blue }}>repward</Text>;
+  return (
+    <View style={[s.row, { gap: 9 }]}>
+      <Svg width={30} height={31} viewBox="0 0 32 32">
+        <Path fill={c.blue} d="M2 26 11 5h6L8 26zm10 0 9-21h6l-9 21zm10 0 5-12h5l-5 12z" />
+      </Svg>
+      <Text style={{ fontSize: 25, fontWeight: '900', letterSpacing: -1.6, color: c.ink }}>Repward</Text>
+    </View>
+  );
 }
 export function Label({ children, color = c.mute }: { children: ReactNode; color?: string }) {
   return <Text style={[s.label, { color }]}>{children}</Text>;
@@ -146,14 +153,14 @@ export const s = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   between: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   body: { fontSize: 15, lineHeight: 22, color: c.mute },
-  title: { fontSize: 24, lineHeight: 30, fontWeight: '700', color: c.ink },
-  label: { fontSize: 11, lineHeight: 16, fontWeight: '700', letterSpacing: 0.7 },
+  title: { fontSize: 24, lineHeight: 30, fontWeight: '800', letterSpacing: -0.9, color: c.ink },
+  label: { fontSize: 11, lineHeight: 16, fontWeight: '800', letterSpacing: 1.5 },
   link: { fontSize: 14, color: c.blue, fontWeight: '700' },
   card: {
     backgroundColor: c.white,
     borderColor: c.faint,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 18,
     padding: 20,
     gap: 14,
   },
@@ -171,7 +178,7 @@ export const s = StyleSheet.create({
     color: c.ink,
     fontSize: 17,
     borderWidth: 1,
-    borderColor: '#9AA69A',
+    borderColor: '#C6CFDD',
     borderRadius: 10,
     minHeight: 48,
     paddingHorizontal: 13,

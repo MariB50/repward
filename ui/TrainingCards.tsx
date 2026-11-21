@@ -1,9 +1,9 @@
-import { Pressable, Text, View } from 'react-native';
+import { ImageBackground, Pressable, Text, View } from 'react-native';
 import type { SessionSnapshot } from '../data/workoutStorage';
 import type { WorkoutExercise } from '../data/workoutSession';
 import { completedSetCount } from '../data/workoutSession';
 import { changeFrom, previousSet, sessionTotals } from '../data/progress';
-import { Button, c, Icon, Label, Link, s } from './kit';
+import { Button, c, digits, Icon, Label, Link, s } from './kit';
 
 export function Hero({
   name,
@@ -23,18 +23,77 @@ export function Hero({
   onPress: () => void;
 }) {
   return (
-    <View style={s.card}>
-      <Text style={s.title}>{name}</Text>
-      <Text style={s.body}>
-        {exerciseCount} {exerciseCount === 1 ? 'exercise' : 'exercises'} · {active ? done + ' / ' : ''}
-        {sets} sets
-      </Text>
-      {!active && (
-        <Button disabled={locked} onPress={onPress}>
-          Start workout
-        </Button>
-      )}
-    </View>
+    <ImageBackground
+      source={require('../assets/training.jpg')}
+      resizeMode="cover"
+      imageStyle={{ borderRadius: 18, width: '100%', height: '100%', zIndex: 0 }}
+      style={{
+        backgroundColor: '#060C20',
+        borderRadius: 18,
+        overflow: 'hidden',
+        minHeight: active ? 176 : 230,
+        justifyContent: 'center',
+      }}
+    >
+      <View
+        style={{ padding: 24, alignItems: 'flex-start', gap: 12, backgroundColor: 'rgba(4,10,26,0.32)' }}
+      >
+        <View style={s.row}>
+          <View style={{ width: 20, height: 3, backgroundColor: '#8EA8FF' }} />
+          <Label color="#DAE3FF">{active ? 'CURRENT WORKOUT' : 'YOUR ROUTINE'}</Label>
+        </View>
+        <Text
+          style={{
+            fontSize: 40,
+            fontWeight: '900',
+            color: c.white,
+            letterSpacing: -1.9,
+            maxWidth: '94%',
+            textShadowColor: '#071026',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 5,
+          }}
+        >
+          {name}
+        </Text>
+        <View style={[s.row, { flexWrap: 'wrap', gap: 14 }]}>
+          <View style={[s.row, { gap: 5 }]}>
+            <Icon name="bar" size={17} color="#D8E1F3" />
+            <Text style={{ color: c.white, fontSize: 14 }}>{exerciseCount} exercises</Text>
+          </View>
+          <View style={[s.row, { gap: 5 }]}>
+            <Icon name="stack" size={16} color="#D8E1F3" />
+            <Text style={{ color: c.white, fontSize: 14 }}>
+              {active ? done + ' / ' + sets + ' sets' : sets + ' sets'}
+            </Text>
+          </View>
+        </View>
+        {!active && (
+          <Button style={{ marginTop: 8 }} icon="play" disabled={locked} onPress={onPress}>
+            Start workout
+          </Button>
+        )}
+        {active && (
+          <View
+            style={{
+              height: 4,
+              width: 160,
+              backgroundColor: '#42506A',
+              borderRadius: 3,
+              overflow: 'hidden',
+            }}
+          >
+            <View
+              style={{
+                width: ((100 * done) / sets + '%') as `${number}%`,
+                height: 4,
+                backgroundColor: '#94ABFF',
+              }}
+            />
+          </View>
+        )}
+      </View>
+    </ImageBackground>
   );
 }
 
@@ -86,7 +145,7 @@ export function ExerciseList({
                 },
               ]}
             >
-              <View style={[s.tile, { backgroundColor: chosen ? c.pale : c.bg }]}>
+              <View style={[s.tile, { backgroundColor: chosen ? '#DCE4FF' : '#F0F3FB' }]}>
                 <Icon
                   name={e.id === 'bench-press' ? 'bench' : e.id === 'seated-row' ? 'row' : 'bar'}
                   size={26}
@@ -103,12 +162,16 @@ export function ExerciseList({
                     : e.plannedSets + (e.plannedSets === 1 ? ' planned set' : ' planned sets')}
                 </Text>
               </View>
-              {active && (
+              {active ? (
                 <Icon
                   name={count === e.plannedSets ? 'check' : 'next'}
                   size={18}
                   color={count === e.plannedSets ? c.green : c.blue}
                 />
+              ) : (
+                <Text style={[digits, { color: '#64728B', fontSize: 13 }]}>
+                  {String(i + 1).padStart(2, '0')}
+                </Text>
               )}
             </Pressable>
           );
@@ -155,6 +218,7 @@ export function WeekCard({ history, onHistory }: { history: SessionSnapshot[]; o
               >
                 <Text
                   style={[
+                    digits,
                     {
                       fontSize: 13,
                       fontWeight: current ? '700' : '500',
@@ -210,7 +274,7 @@ export function SessionDetails({
             : 'UNFINISHED WORKOUT'}
         </Label>
         <Text style={[s.title, { color: c.white, fontSize: 30, lineHeight: 37 }]}>{session.name}</Text>
-        <Text style={{ color: '#EEF4EB' }}>
+        <Text style={{ color: '#DAE2F3' }}>
           {totals.sets} sets logged · {totals.volume.toLocaleString()} lb total volume
         </Text>
       </View>

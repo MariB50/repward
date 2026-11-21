@@ -33,3 +33,12 @@ npx expo export --platform ios --platform web
 ```
 
 The database upgrades earlier Repward logs in place. The newest unfinished workout resumes on launch when it is the latest session. Older unfinished logs from earlier builds remain available in History. Each session preserves its exercise names, order and planned sets as they were when it began.
+
+<details>
+<summary>Workout artwork</summary>
+
+The routine cover in `assets/training.jpg` was created with the built-in ImageGen tool. Generation prompt:
+
+> Wide 3:2 editorial sports product photograph. Sculptural close-up of one heavy black cast-iron adjustable dumbbell with round stacked plates and a textured steel handle, diagonally from lower center to upper right. Restrained blue duotone with crisp cobalt rim light and deep midnight navy shadows. Tactile gritty metal, fine photographic grain, hard side light. The left third is entirely dark navy negative space, weight fills right two thirds. Dark studio backdrop. No text, numerals, logos or graphics.
+
+</details>
