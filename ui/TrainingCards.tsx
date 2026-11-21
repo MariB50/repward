@@ -3,6 +3,8 @@ import type { SessionSnapshot } from '../data/workoutStorage';
 import type { WorkoutExercise } from '../data/workoutSession';
 import { completedSetCount } from '../data/workoutSession';
 import { changeFrom, previousSet, sessionTotals } from '../data/progress';
+import { catalogExerciseFor } from '../data/exerciseCatalog';
+import { ExercisePhoto } from './ExercisePhoto';
 import { Button, c, digits, Icon, Label, Link, s } from './kit';
 
 export function Hero({
@@ -118,7 +120,7 @@ export function ExerciseList({
         <Text style={s.title}>Exercises</Text>
         {!active && (
           <Link disabled={locked} icon="edit" onPress={onEdit}>
-            Edit routine
+            Edit workout
           </Link>
         )}
       </View>
@@ -145,13 +147,7 @@ export function ExerciseList({
                 },
               ]}
             >
-              <View style={[s.tile, { backgroundColor: chosen ? '#DCE4FF' : '#F0F3FB' }]}>
-                <Icon
-                  name={e.id === 'bench-press' ? 'bench' : e.id === 'seated-row' ? 'row' : 'bar'}
-                  size={26}
-                  color={c.blue}
-                />
-              </View>
+              <ExercisePhoto id={catalogExerciseFor(e)?.id} width={56} height={48} />
               <View style={{ flex: 1, gap: 3 }}>
                 <Text style={{ fontSize: 17, fontWeight: '700', color: c.ink, letterSpacing: -0.35 }}>
                   {e.name}
@@ -162,16 +158,12 @@ export function ExerciseList({
                     : e.plannedSets + (e.plannedSets === 1 ? ' planned set' : ' planned sets')}
                 </Text>
               </View>
-              {active ? (
+              {active && (
                 <Icon
                   name={count === e.plannedSets ? 'check' : 'next'}
                   size={18}
                   color={count === e.plannedSets ? c.green : c.blue}
                 />
-              ) : (
-                <Text style={[digits, { color: '#64728B', fontSize: 13 }]}>
-                  {String(i + 1).padStart(2, '0')}
-                </Text>
               )}
             </Pressable>
           );

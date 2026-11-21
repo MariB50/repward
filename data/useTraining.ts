@@ -4,6 +4,7 @@ import { openWorkoutStorage } from './openWorkoutStorage';
 import { createWorkoutStartup } from './workoutStartup';
 import { createWorkoutSetSaver } from './workoutSetSaver';
 import { sampleWorkout, type WorkoutPlan } from './sampleWorkout';
+import { readWorkoutLibrary, updateWorkoutPlan } from './workoutLibrary';
 import { createWorkoutExercises, type SetRecord } from './workoutSession';
 import type { SessionSnapshot } from './workoutStorage';
 import { allowRestAlerts, updateRestAlert } from './restAlerts';
@@ -30,7 +31,8 @@ export function useTraining() {
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [plan, setPlan] = useState(sampleWorkout);
+  const [library, setLibrary] = useState(() => readWorkoutLibrary({}, sampleWorkout));
+  const plan = library.plans.find((item) => item.id === library.selectedId) ?? library.plans[0];
   const [duration, setDuration] = useState(90);
   const [alerts, setAlerts] = useState(false);
   const [active, setActive] = useState<SessionSnapshot | null>(null);
@@ -47,7 +49,7 @@ export function useTraining() {
       const [sessions, prefs] = await Promise.all([storage.readSessions(), storage.readPreferences()]);
       if (live.current !== conn) return;
       const current = sessions[0] && !sessions[0].endedAt ? sessions[0] : null;
-      setPlan(prefs.plan ? JSON.parse(prefs.plan) : sampleWorkout);
+      setLibrary(readWorkoutLibrary(prefs, sampleWorkout));
       setDuration(Number(prefs.rest) || 90);
       setAlerts(prefs.alerts === 'on');
       setActive(current);
@@ -168,11 +170,20 @@ export function useTraining() {
       await notify(null, alerts);
     });
   }
-  function savePlan(p: WorkoutPlan) {
-    return run('Couldn’t save this routine. Try again.', async (conn) => {
-      await (await conn.startup.prepare()).setPreference('plan', JSON.stringify(p));
-      if (live.current === conn) setPlan(p);
+  function persistLibrary(next: typeof library, message: string) {
+    return run(message, async (conn) => {
+      await (await conn.startup.prepare()).setPreference('workouts', JSON.stringify(next));
+      if (live.current === conn) setLibrary(next);
     });
+  }
+  function savePlan(next: WorkoutPlan, select: boolean) {
+    return persistLibrary(
+      updateWorkoutPlan(library, next, select),
+      'Couldn’t save this workout. Try again.',
+    );
+  }
+  function selectPlan(id: string) {
+    return persistLibrary({ ...library, selectedId: id }, 'Couldn’t select this workout. Try again.');
   }
   function setRest(until: number | null) {
     return run('Couldn’t update the rest timer. Try again.', async (conn) => {
@@ -207,6 +218,7 @@ export function useTraining() {
   }
   return {
     plan,
+    plans: library.plans,
     active,
     history,
     duration,
@@ -220,6 +232,7 @@ export function useTraining() {
     save,
     finish,
     savePlan,
+    selectPlan,
     setRest,
     chooseDuration,
     toggleAlerts,

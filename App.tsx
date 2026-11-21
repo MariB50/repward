@@ -10,7 +10,9 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { randomUUID } from 'expo-crypto';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import type { WorkoutPlan } from './data/sampleWorkout';
 import { useTraining } from './data/useTraining';
 import { completedSetCount, createWorkoutExercises } from './data/workoutSession';
 import { previousSet, sessionTotals } from './data/progress';
@@ -19,13 +21,23 @@ import { RestTimer } from './ui/RestTimer';
 import { RoutineEditor } from './ui/RoutineEditor';
 import { SetEntry } from './ui/SetEntry';
 import { ExerciseList, Hero, SessionDetails, SetRows, WeekCard } from './ui/TrainingCards';
+import { WorkoutLibrary } from './ui/WorkoutLibrary';
 
-type Page = 'training' | 'history' | 'routine' | 'summary';
+type Page = 'training' | 'workouts' | 'history' | 'routine' | 'summary';
+const tabs = [
+  { page: 'training', label: 'Training', icon: 'bar' },
+  { page: 'workouts', label: 'Workouts', icon: 'list' },
+  { page: 'history', label: 'History', icon: 'history' },
+] as const;
+
 function TrainingApp() {
   const t = useTraining();
   const { width } = useWindowDimensions();
   const wide = width >= 860;
   const [page, setPage] = useState<Page>('training');
+  const [editor, setEditor] = useState<{ plan: WorkoutPlan; back: 'training' | 'workouts' } | null>(
+    null,
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [editingSet, setEditingSet] = useState<number | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -47,7 +59,7 @@ function TrainingApp() {
   const detail = t.history.find((h) => h.id === detailId);
   const today = new Date();
   const date = today.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  const historyTab = page === 'history' || page === 'summary';
+  const activeTab = page === 'summary' ? 'history' : page === 'routine' ? editor?.back : page;
   const top = () => scroll.current?.scrollTo({ y: 0, animated: false });
   function navigate(next: Page) {
     if (t.busy || t.retrySet) return;
@@ -57,38 +69,45 @@ function TrainingApp() {
     if (next === 'history') setDetailId(null);
     top();
   }
+  function editWorkout(plan?: WorkoutPlan) {
+    const back = page === 'training' && plan ? 'training' : 'workouts';
+    setEditor({ plan: plan ?? { id: randomUUID(), name: '', exercises: [] }, back });
+    navigate('routine');
+  }
+  async function selectWorkout(id: string) {
+    if (id === t.plan.id || (await t.selectPlan(id))) {
+      if (id !== t.plan.id) setSelected(null);
+      navigate('training');
+    }
+  }
   useEffect(() => {
     top();
   }, [page, detailId]);
   const nav = (
     <View style={[s.row, { gap: 6, justifyContent: wide ? 'center' : 'space-evenly' }]}>
-      {(['training', 'history'] as const).map((item) => {
-        const on = (item === 'history') === historyTab;
+      {tabs.map((item) => {
+        const on = item.page === activeTab;
         return (
           <Pressable
-            key={item}
+            key={item.page}
             accessibilityRole="tab"
             accessibilityState={{ selected: on, disabled: t.busy || t.retrySet }}
             disabled={t.busy || t.retrySet}
-            onPress={() => navigate(item)}
+            onPress={() => navigate(item.page)}
             style={({ pressed }) => [
               s.row,
               {
                 minHeight: 42,
-                paddingHorizontal: 18,
+                paddingHorizontal: wide ? 18 : 10,
                 borderRadius: 12,
                 backgroundColor: on ? c.pale : 'transparent',
                 opacity: pressed ? 0.65 : 1,
               },
             ]}
           >
-            <Icon
-              name={item === 'training' ? 'bar' : 'history'}
-              color={on ? c.blue : c.mute}
-              size={19}
-            />
+            <Icon name={item.icon} color={on ? c.blue : c.mute} size={19} />
             <Text style={{ color: on ? c.blue : c.mute, fontWeight: '700', fontSize: 14 }}>
-              {item === 'training' ? 'Training' : 'History'}
+              {item.label}
             </Text>
           </Pressable>
         );
@@ -127,16 +146,20 @@ function TrainingApp() {
   );
   const title =
     page === 'routine'
-      ? 'Edit routine'
-      : page === 'history'
-        ? detail
-          ? 'Workout details'
-          : 'Workout history'
-        : page === 'summary'
-          ? 'Workout saved'
-          : t.active
-            ? 'In session'
-            : 'Training dashboard';
+      ? editor?.plan.name
+        ? 'Edit workout'
+        : 'New workout'
+      : page === 'workouts'
+        ? 'My workouts'
+        : page === 'history'
+          ? detail
+            ? 'Workout details'
+            : 'Workout history'
+          : page === 'summary'
+            ? 'Workout saved'
+            : t.active
+              ? 'In session'
+              : 'Training dashboard';
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.white }}>
       <StatusBar style="dark" />
@@ -182,10 +205,14 @@ function TrainingApp() {
             {(page === 'routine' || page === 'summary' || (page === 'history' && detail)) && (
               <Link
                 disabled={t.busy}
-                onPress={() => navigate(page === 'routine' ? 'training' : 'history')}
+                onPress={() => navigate(page === 'routine' ? (editor?.back ?? 'workouts') : 'history')}
                 icon="back"
               >
-                {page === 'routine' ? 'Training' : 'History'}
+                {page === 'routine'
+                  ? editor?.back === 'training'
+                    ? 'Training'
+                    : 'Workouts'
+                  : 'History'}
               </Link>
             )}
             <Text
@@ -200,6 +227,23 @@ function TrainingApp() {
             >
               {title}
             </Text>
+            {page === 'workouts' && (
+              <Button
+                icon="plus"
+                disabled={t.locked}
+                onPress={() => editWorkout()}
+                style={{ alignSelf: 'flex-start', marginTop: 6 }}
+              >
+                New workout
+              </Button>
+            )}
+            {page === 'training' && !t.active && (
+              <View style={{ alignSelf: 'flex-start' }}>
+                <Link icon="plus" disabled={t.locked} onPress={() => editWorkout()}>
+                  New workout
+                </Link>
+              </View>
+            )}
           </View>
           {(!!t.error || !!t.notice) && (
             <View style={[s.card, { padding: 12 }]}>
@@ -293,7 +337,7 @@ function TrainingApp() {
                   active={!!t.active}
                   selected={current.id}
                   locked={t.locked}
-                  onEdit={() => navigate('routine')}
+                  onEdit={() => editWorkout(t.plan)}
                   onSelect={(id) => {
                     setEditingSet(null);
                     setSelected(id);
@@ -336,25 +380,36 @@ function TrainingApp() {
               {(wide || !t.active) && <View style={{ width: wide ? 300 : undefined }}>{aside}</View>}
             </View>
           )}
-          {page === 'routine' && (
+          {page === 'workouts' && t.ready && (
+            <WorkoutLibrary
+              plans={t.plans}
+              selectedId={t.plan.id}
+              inSession={!!t.active}
+              locked={t.locked}
+              onSelect={selectWorkout}
+              onEdit={editWorkout}
+            />
+          )}
+          {page === 'routine' && editor && (
             <View style={{ width: '100%', maxWidth: 720 }}>
               <RoutineEditor
-                plan={t.plan}
+                key={editor.plan.id}
+                plan={editor.plan}
                 locked={t.busy}
-                knownIds={
-                  new Map(
-                    [
-                      ...t.history
-                        .slice()
-                        .reverse()
-                        .flatMap((h) => h.exercises),
-                      ...t.plan.exercises,
-                    ].map((e) => [e.name.trim().toLowerCase(), e.id]),
-                  )
-                }
-                onCancel={() => navigate('training')}
+                knownExercises={[
+                  ...t.history
+                    .slice()
+                    .reverse()
+                    .flatMap((session) => session.exercises),
+                  ...t.plans.flatMap((plan) => plan.exercises),
+                  ...editor.plan.exercises,
+                ]}
+                onCancel={() => navigate(editor.back)}
                 onSave={async (p) => {
-                  if (await t.savePlan(p)) navigate('training');
+                  const isNew = !t.plans.some((plan) => plan.id === p.id);
+                  if (await t.savePlan(p, isNew && !t.active)) {
+                    navigate(isNew && !t.active ? 'training' : editor.back);
+                  }
                 }}
               />
             </View>

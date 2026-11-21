@@ -4,7 +4,7 @@ Repward is a personal strength-training log built with Expo, React Native, TypeS
 
 ## Train
 
-1. Open **Edit routine** to name your workout, add or remove exercises, and set the number of sets. The starter routine has bench press and seated row.
+1. Open **Workouts** to switch between saved routines, or tap **New workout** to build one. Tap **Add exercise** to search exercise names or filter by equipment. Tap any picture to enlarge it. Use **Add a custom exercise** for anything your gym has that the catalog doesn't cover.
 2. Choose your rest duration. It defaults to 90 seconds. On a phone, tap the bell and allow notifications if you want a lock-screen alert.
 3. Tap **Start workout**. Log pounds and reps for each set, or tap an exercise to change the order. The next matching set starts with the most recent numbers from a finished session. If there is no matching session, it uses the preceding set from this workout.
 4. Logging a set starts rest when there are sets left. Extend the current break by 30 seconds or skip it. Choosing a different preset changes the next rest. Reopening Repward restores logged sets and calculates the time remaining from the saved deadline.
@@ -42,3 +42,5 @@ The routine cover in `assets/training.jpg` was created with the built-in ImageGe
 > Wide 3:2 editorial sports product photograph. Sculptural close-up of one heavy black cast-iron adjustable dumbbell with round stacked plates and a textured steel handle, diagonally from lower center to upper right. Restrained blue duotone with crisp cobalt rim light and deep midnight navy shadows. Tactile gritty metal, fine photographic grain, hard side light. The left third is entirely dark navy negative space, weight fills right two thirds. Dark studio backdrop. No text, numerals, logos or graphics.
 
 </details>
+
+The exercise catalog and pictures are bundled for offline use. Pictures are resized and converted to JPEG. See the [exercise image credits](assets/exercises/credits.json) for sources, authors, and licenses.
