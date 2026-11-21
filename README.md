@@ -4,7 +4,7 @@ Repward is a personal strength-training log built with Expo, React Native, TypeS
 
 ## Train
 
-1. Open **Workouts** to switch between saved routines, or tap **New workout** to build one. Tap **Add exercise** to search exercise names or filter by equipment. Tap any picture to enlarge it. Use **Add a custom exercise** for anything your gym has that the catalog doesn't cover.
+1. Open **Workouts** to switch between saved routines, or tap **New workout** to build one. Tap **Add exercise** to search exercise names or filter by equipment. Tap any picture to enlarge it. Use **Add a custom exercise** for anything your gym has that the catalog doesn't cover. Tap **Reorder** in the workout editor to drag exercises into the order you want.
 2. Choose your rest duration. It defaults to 90 seconds. On a phone, tap the bell and allow notifications if you want a lock-screen alert.
 3. Tap **Start workout**. Log pounds and reps for each set, or tap an exercise to change the order. The next matching set starts with the most recent numbers from a finished session. If there is no matching session, it uses the preceding set from this workout.
 4. Logging a set starts rest when there are sets left. Extend the current break by 30 seconds or skip it. Choosing a different preset changes the next rest. Reopening Repward restores logged sets and calculates the time remaining from the saved deadline.

@@ -5,6 +5,7 @@ import type { Exercise, WorkoutPlan } from '../data/sampleWorkout';
 import { catalogExerciseFor, exerciseNameKey, type CatalogExercise } from '../data/exerciseCatalog';
 import { ExercisePhoto } from './ExercisePhoto';
 import { ExercisePicker } from './ExercisePicker';
+import { ExerciseOrderEditor } from './ExerciseOrderEditor';
 import { Button, c, Icon, Label, Link, s } from './kit';
 
 export function RoutineEditor({
@@ -25,6 +26,7 @@ export function RoutineEditor({
     plan.exercises.map((e) => ({ id: e.id, name: e.name, sets: String(e.plannedSets) })),
   );
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [reordering, setReordering] = useState(false);
   const [customName, setCustomName] = useState<string | null>(null);
   const [error, setError] = useState('');
   const selectedNames = new Set(rows.map((row) => exerciseNameKey(row.name)));
@@ -99,19 +101,33 @@ export function RoutineEditor({
         />
       </View>
       <View style={s.card}>
-        <View style={s.between}>
+        <View style={[s.between, { flexWrap: 'wrap', columnGap: 12, rowGap: 0 }]}>
           <Text style={[s.title, { fontSize: 19 }]}>Exercises</Text>
-          <Link
-            icon="plus"
-            disabled={locked}
-            onPress={() => {
-              Keyboard.dismiss();
-              setError('');
-              setPickerOpen(true);
-            }}
-          >
-            Add exercise
-          </Link>
+          <View style={[s.row, { gap: 14 }]}>
+            {rows.length > 1 && (
+              <Link
+                icon="grip"
+                disabled={locked}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setReordering(true);
+                }}
+              >
+                Reorder
+              </Link>
+            )}
+            <Link
+              icon="plus"
+              disabled={locked}
+              onPress={() => {
+                Keyboard.dismiss();
+                setError('');
+                setPickerOpen(true);
+              }}
+            >
+              Add exercise
+            </Link>
+          </View>
         </View>
         {!rows.length && <Text style={s.body}>Search the exercise catalog to build your workout.</Text>}
         {rows.map((row, i) => (
@@ -209,6 +225,16 @@ export function RoutineEditor({
             setCustomName(value);
           }}
           onClose={() => setPickerOpen(false)}
+        />
+      )}
+      {reordering && (
+        <ExerciseOrderEditor
+          exercises={rows}
+          onDone={(order) => {
+            setRows(order);
+            setReordering(false);
+          }}
+          onCancel={() => setReordering(false)}
         />
       )}
     </View>
