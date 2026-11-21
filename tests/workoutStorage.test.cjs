@@ -52,7 +52,7 @@ test('creation captures each session plan and creates explicit unfinished set ro
   await creating;
   await storage.createSession('second', sampleWorkout);
 
-  assert.deepEqual(await db.getAllAsync('SELECT * FROM sessions ORDER BY id'), [
+  assert.deepEqual(await db.getAllAsync('SELECT id, ended_at FROM sessions ORDER BY id'), [
     { id: 'first', ended_at: null }, { id: 'second', ended_at: null },
   ]);
   assert.deepEqual(await db.getAllAsync(
@@ -276,14 +276,14 @@ test('records survive closing/reopening a file database; close drains pending wr
     'SELECT weight, reps FROM set_results WHERE session_id = ? AND exercise_id = ? AND set_number = 1',
     sessionId, 'bench-press',
   ), { weight: 50, reps: 10 });
-  assert.equal((await reopenedDb.getFirstAsync('PRAGMA user_version')).user_version, 1);
+  assert.equal((await reopenedDb.getFirstAsync('PRAGMA user_version')).user_version, 2);
   assert.equal((await reopenedDb.getFirstAsync('PRAGMA foreign_keys')).foreign_keys, 1);
 });
 
 test('initialization refuses a newer database version without creating tables', async (t) => {
   const db = adaptDatabase(new DatabaseSync(':memory:'));
   t.after(() => db.closeAsync());
-  await db.execAsync('PRAGMA user_version = 2');
+  await db.execAsync('PRAGMA user_version = 3');
   await assert.rejects(createWorkoutStorage(db), /newer app version/);
   assert.equal((await db.getFirstAsync(
     "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
@@ -299,7 +299,7 @@ test('startup creates exactly one real SQLite session with its original unfinish
 
   const ids = await Promise.all([startup.start(sampleWorkout), startup.start(sampleWorkout)]);
   assert.deepEqual(ids, ['startup-session', 'startup-session']);
-  assert.deepEqual(await db.getAllAsync('SELECT * FROM sessions'), [
+  assert.deepEqual(await db.getAllAsync('SELECT id, ended_at FROM sessions'), [
     { id: 'startup-session', ended_at: null },
   ]);
   assert.equal((await db.getFirstAsync('SELECT COUNT(*) AS count FROM session_exercises')).count, 2);
@@ -379,4 +379,68 @@ test('a real SQLite writer lock can clear on automatic retry without duplicating
     'SELECT weight, reps FROM set_results WHERE session_id = ? AND exercise_id = ? AND set_number = 1',
     request.sessionId, request.exerciseId,
   ), request.record);
+});
+
+test('migrating a version-one log preserves partial work and can resume its rest timer', async (t) => {
+  const native = new DatabaseSync(':memory:');
+  const db = adaptDatabase(native);
+  const original = await createWorkoutStorage(db);
+  await original.createSession('old', sampleWorkout);
+  await original.saveSet('old', 'bench-press', 1, { weight: 65, reps: 8 });
+  await db.execAsync(`
+    DROP TABLE preferences;
+    ALTER TABLE sessions DROP COLUMN rest_until;
+    ALTER TABLE sessions DROP COLUMN started_at;
+    ALTER TABLE sessions DROP COLUMN name;
+    PRAGMA user_version = 1;
+  `);
+  const storage = await createWorkoutStorage(db);
+  t.after(() => storage.close());
+  const [legacy] = await storage.readSessions();
+  assert.equal(legacy.startedAt, null);
+  assert.equal(legacy.name, 'Upper body');
+  assert.deepEqual(legacy.exercises[0].sets, [{ weight: 65, reps: 8 }, null]);
+  await storage.saveSet('old', 'bench-press', 2, { weight: 70, reps: 7 }, 5000);
+  await storage.saveSet('old', 'bench-press', 2, { weight: 70, reps: 8 });
+  assert.equal((await storage.readSessions())[0].restUntil, 5000);
+  await storage.setRest('old', 35000);
+  assert.equal((await storage.readSessions())[0].restUntil, 35000);
+  await storage.setRest('old', null);
+  assert.equal((await storage.readSessions())[0].restUntil, null);
+});
+
+test('history retains set order and plan snapshots across repeated sessions', async (t) => {
+  const { storage } = await fixture(t);
+  let sequence = 0;
+  const startup = createWorkoutStartup(async () => storage, () => String(++sequence));
+  const first = await startup.start(sampleWorkout);
+  await storage.saveSet(first, 'bench-press', 1, { weight: 50, reps: 8 }, 10000);
+  await storage.finishSession(first, createWorkoutExercises(sampleWorkout));
+  startup.finished(first);
+  const plan = { ...sampleWorkout, name: 'Pull day', exercises: [sampleWorkout.exercises[1]] };
+  assert.equal(await startup.start(plan), '2');
+  const [active, ended] = await storage.readSessions();
+  assert.equal(active.name, 'Pull day');
+  assert.equal(active.endedAt, null);
+  assert.deepEqual(active.exercises.map(e => e.id), ['seated-row']);
+  assert.equal(ended.name, 'Upper body');
+  assert.deepEqual(ended.exercises[0].sets, [{ weight: 50, reps: 8 }, null]);
+  assert.equal(ended.restUntil, null);
+  await assert.rejects(storage.setRest(first, 30000), /Active workout not found/);
+  await storage.setPreference('rest', '180');
+  await storage.setPreference('rest', '60');
+  assert.deepEqual(await storage.readPreferences(), { rest: '60' });
+});
+
+test('set and deadline roll back together on a timer write failure', async (t) => {
+  const { db, storage } = await fixture(t);
+  await storage.createSession('session', sampleWorkout);
+  await db.execAsync(`
+    CREATE TRIGGER fail_timer BEFORE UPDATE OF rest_until ON sessions
+    BEGIN SELECT RAISE(ABORT, 'timer failed'); END;
+  `);
+  await assert.rejects(storage.saveSet('session', 'bench-press', 1, { weight: 60, reps: 5 }, 20000));
+  const [session] = await storage.readSessions();
+  assert.equal(session.restUntil, null);
+  assert.equal(session.exercises[0].sets[0], null);
 });

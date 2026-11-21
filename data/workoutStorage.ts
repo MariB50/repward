@@ -10,7 +10,25 @@ export type WorkoutDatabase = Pick<
   'execAsync' | 'runAsync' | 'getFirstAsync' | 'getAllAsync' | 'withTransactionAsync' | 'closeAsync'
 >;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+export type SessionSnapshot = {
+  id: string;
+  name: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  restUntil: number | null;
+  exercises: WorkoutExercise[];
+};
+
+type SessionRow = Omit<SessionSnapshot, 'exercises'> & {
+  exerciseId: string;
+  exerciseName: string;
+  plannedSets: number;
+  setNumber: number;
+  weight: number | null;
+  reps: number | null;
+};
 
 const SCHEMA_SQL = `
   CREATE TABLE sessions (
@@ -86,9 +104,15 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
 
   // Foreign keys are connection settings, so enable them before any transaction.
   await db.execAsync('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-  if (!version || version.user_version === 0) {
+  if ((version?.user_version ?? 0) < SCHEMA_VERSION) {
     await db.withTransactionAsync(async () => {
-      await db.execAsync(SCHEMA_SQL);
+      if (!version || version.user_version === 0) await db.execAsync(SCHEMA_SQL);
+      await db.execAsync(`
+        ALTER TABLE sessions ADD COLUMN name TEXT NOT NULL DEFAULT 'Upper body';
+        ALTER TABLE sessions ADD COLUMN started_at TEXT;
+        ALTER TABLE sessions ADD COLUMN rest_until INTEGER;
+        CREATE TABLE preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      `);
       await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
   }
@@ -129,9 +153,11 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
     // Capture values before waiting in the queue; later plan edits can't affect
     // this session's original names, order or planned set counts.
     const exercises = plan.exercises.map((exercise) => ({ ...exercise }));
+    const name = plan.name;
 
     return schedule(() => db.withTransactionAsync(async () => {
-      await db.runAsync('INSERT INTO sessions (id, ended_at) VALUES (?, NULL)', sessionId);
+      await db.runAsync('INSERT INTO sessions (id, name, started_at) VALUES (?, ?, ?)',
+        sessionId, name, new Date().toISOString());
       for (const [position, exercise] of exercises.entries()) {
         await db.runAsync(
           `INSERT INTO session_exercises (session_id, exercise_id, name, planned_sets, position)
@@ -151,7 +177,7 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
 
   /** setNumber is one-based: the first planned set is set 1. */
   async function saveSet(
-    sessionId: string, exerciseId: string, setNumber: number, record: SetRecord,
+    sessionId: string, exerciseId: string, setNumber: number, record: SetRecord, restUntil?: number | null,
   ): Promise<void> {
     validateId(sessionId);
     validateId(exerciseId);
@@ -165,6 +191,9 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
       const session = await findSession(sessionId);
       if (session.ended_at !== null) throw new Error('This workout has already ended.');
       await writeSet(sessionId, exerciseId, setNumber, savedRecord);
+      if (restUntil !== undefined) {
+        await db.runAsync('UPDATE sessions SET rest_until = ? WHERE id = ?', restUntil, sessionId);
+      }
     }));
   }
 
@@ -209,7 +238,7 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
           if (set !== null) await writeSet(sessionId, exercise.id, index + 1, set);
         }
       }
-      await db.runAsync('UPDATE sessions SET ended_at = ? WHERE id = ?', endTime, sessionId);
+      await db.runAsync('UPDATE sessions SET ended_at = ?, rest_until = NULL WHERE id = ?', endTime, sessionId);
     }));
   }
 
@@ -221,5 +250,54 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
     return closePromise;
   }
 
-  return { createSession, saveSet, finishSession, close };
+  function readSessions(): Promise<SessionSnapshot[]> {
+    return schedule(async () => {
+      const rows = await db.getAllAsync<SessionRow>(`
+        SELECT s.id, s.name, s.started_at AS startedAt, s.ended_at AS endedAt, s.rest_until AS restUntil,
+          e.exercise_id AS exerciseId, e.name AS exerciseName, e.planned_sets AS plannedSets,
+          r.set_number AS setNumber, r.weight, r.reps
+        FROM sessions s JOIN session_exercises e ON e.session_id = s.id
+        JOIN set_results r ON r.session_id = s.id AND r.exercise_id = e.exercise_id
+        ORDER BY s.rowid DESC, e.position, r.set_number
+      `);
+      const sessions: SessionSnapshot[] = [];
+      for (const row of rows) {
+        let session = sessions.at(-1);
+        if (!session || session.id !== row.id) {
+          session = { id: row.id, name: row.name, startedAt: row.startedAt, endedAt: row.endedAt,
+            restUntil: row.restUntil, exercises: [] };
+          sessions.push(session);
+        }
+        let exercise = session.exercises.at(-1);
+        if (!exercise || exercise.id !== row.exerciseId) {
+          exercise = { id: row.exerciseId, name: row.exerciseName, plannedSets: row.plannedSets,
+            sets: Array(row.plannedSets).fill(null) };
+          session.exercises.push(exercise);
+        }
+        if (row.weight !== null && row.reps !== null) {
+          exercise.sets[row.setNumber - 1] = { weight: row.weight, reps: row.reps };
+        }
+      }
+      return sessions;
+    });
+  }
+
+  function setRest(sessionId: string, until: number | null) {
+    return schedule(async () => {
+      const result = await db.runAsync('UPDATE sessions SET rest_until = ? WHERE id = ? AND ended_at IS NULL', until, sessionId);
+      if (result.changes !== 1) throw new Error('Active workout not found.');
+    });
+  }
+
+  function readPreferences() {
+    return schedule(async () => Object.fromEntries((await db.getAllAsync<{key: string; value: string}>(
+      'SELECT key, value FROM preferences',
+    )).map(row => [row.key, row.value])) as Record<string, string>);
+  }
+
+  function setPreference(key: string, value: string) {
+    return schedule(() => db.runAsync('INSERT OR REPLACE INTO preferences (key, value) VALUES (?, ?)', key, value));
+  }
+
+  return { createSession, saveSet, finishSession, readSessions, setRest, readPreferences, setPreference, close };
 }

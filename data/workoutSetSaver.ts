@@ -5,6 +5,7 @@ export type SetSaveRequest = {
   exerciseId: string;
   setNumber: number;
   record: SetRecord;
+  restUntil?: number | null;
 };
 
 const RETRY_DELAYS = [100, 200];

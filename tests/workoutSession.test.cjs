@@ -72,3 +72,18 @@ test('input validation accepts decimal weights and zero without treating blanks 
     assert.equal(parseSetRecord(weight, reps), null, `Reject ${weight}/${reps}`);
   }
 });
+
+test('overload comparisons use the newest logged matching slot from a finished session', () => {
+  const { previousSet, changeFrom } = require('../data/progress.ts');
+  const history = [
+    { endedAt: null, exercises: [{ id: 'row', sets: [{ weight: 100, reps: 8 }] }] },
+    { endedAt: 'recent', exercises: [{ id: 'row', sets: [{ weight: 65, reps: 8 }, null] }] },
+    { endedAt: 'older', exercises: [{ id: 'row', sets: [{ weight: 60, reps: 8 }, { weight: 62.5, reps: 6 }] }] },
+  ];
+  assert.deepEqual(previousSet(history, 'row', 0), { weight: 65, reps: 8 });
+  assert.deepEqual(previousSet(history, 'row', 1), { weight: 62.5, reps: 6 });
+  assert.equal(previousSet(history, 'bench', 0), null);
+  assert.equal(changeFrom({ weight: 65, reps: 9 }, previousSet(history, 'row', 0)), '+1 rep');
+  assert.equal(changeFrom({ weight: 70, reps: 7 }, previousSet(history, 'row', 0)), '+5 lb · -1 rep');
+  assert.equal(changeFrom({ weight: 65, reps: 8 }, previousSet(history, 'row', 0)), 'Matched');
+});

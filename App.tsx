@@ -1,393 +1,373 @@
-import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { randomUUID } from 'expo-crypto';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { useTraining } from './data/useTraining';
+import { completedSetCount, createWorkoutExercises } from './data/workoutSession';
+import { previousSet, sessionTotals } from './data/progress';
+import { Brand, Button, c, Icon, Label, Link, s } from './ui/kit';
+import { RestTimer } from './ui/RestTimer';
+import { RoutineEditor } from './ui/RoutineEditor';
+import { SetEntry } from './ui/SetEntry';
+import { ExerciseList, Hero, SessionDetails, SetRows, WeekCard } from './ui/TrainingCards';
 
-import { sampleWorkout } from './data/sampleWorkout';
-import { openWorkoutStorage } from './data/openWorkoutStorage';
-import { createWorkoutStartup, type WorkoutStartup } from './data/workoutStartup';
-import { createWorkoutSetSaver, type WorkoutSetSaver } from './data/workoutSetSaver';
-import {
-  completedSetCount,
-  createWorkoutExercises,
-  parseSetRecord,
-  recordSet,
-} from './data/workoutSession';
-
-export default function App() {
-  const scrollView = useRef<ComponentRef<typeof ScrollView>>(null);
-  const startupRef = useRef<WorkoutStartup | null>(null);
-  const setSaverRef = useRef<WorkoutSetSaver | null>(null);
-  const storageClosing = useRef<Promise<void>>(Promise.resolve());
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isStarting, setIsStarting] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
-  const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
-  const [exercises, setExercises] = useState(() => createWorkoutExercises(sampleWorkout));
-  const [weightInput, setWeightInput] = useState('');
-  const [repsInput, setRepsInput] = useState('');
-  const [inputError, setInputError] = useState<string | null>(null);
-  const [isSavingSet, setIsSavingSet] = useState(false);
-  const [setSaveError, setSetSaveError] = useState<string | null>(null);
-  const workoutStarted = sessionId !== null;
-  const setSaveLocked = isSavingSet || setSaveError !== null;
-
-  const getStartup = useCallback(() => {
-    if (!startupRef.current) {
-      const previousClose = storageClosing.current;
-      startupRef.current = createWorkoutStartup(async () => {
-        // A replacement screen/effect waits for the old connection to close.
-        await previousClose;
-        return openWorkoutStorage();
-      }, randomUUID);
-    }
-    return startupRef.current;
-  }, []);
-
-  const getSetSaver = useCallback(() => {
-    if (!setSaverRef.current) {
-      const startup = getStartup();
-      setSaverRef.current = createWorkoutSetSaver(async (request) => {
-        const storage = await startup.prepare();
-        await storage.saveSet(request.sessionId, request.exerciseId, request.setNumber, request.record);
-      });
-    }
-    return setSaverRef.current;
-  }, [getStartup]);
-
+type Page = 'training' | 'history' | 'routine' | 'summary';
+function TrainingApp() {
+  const t = useTraining();
+  const [page, setPage] = useState<Page>('training');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [editingSet, setEditingSet] = useState<number | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const exercises = t.active?.exercises ?? createWorkoutExercises(t.plan);
+  const total = exercises.reduce((n, e) => n + e.plannedSets, 0);
+  const done = exercises.reduce((n, e) => n + completedSetCount(e), 0);
+  const current =
+    exercises.find((e) => e.id === selected) ??
+    exercises.find((e) => completedSetCount(e) < e.plannedSets) ??
+    exercises[0];
+  const slot = editingSet ?? current.sets.findIndex((r) => r === null);
+  const editSet = (index: number) => {
+    setSelected(current.id);
+    setEditingSet(index);
+    top();
+  };
+  const detail = t.history.find((h) => h.id === detailId);
+  const historyTab = page === 'history' || page === 'summary';
+  const top = () => scroll.current?.scrollTo({ y: 0, animated: false });
+  function navigate(next: Page) {
+    if (t.busy || t.retrySet) return;
+    setConfirm(false);
+    setEditingSet(null);
+    setPage(next);
+    if (next === 'history') setDetailId(null);
+    top();
+  }
   useEffect(() => {
-    // A replacement effect cancels any old pending start. Preserve loading if a
-    // user already started through this same coordinator before the effect ran.
-    if (startupRef.current === null) {
-      setIsStarting(false);
-      setIsSavingSet(false);
-      setSetSaveError(null);
-    }
-    const startup = getStartup();
-    void startup.prepare().catch(() => {
-      if (startupRef.current === startup) {
-        setStartError('Couldn’t prepare your workout. Please try again.');
-      }
-    });
-
-    return () => {
-      const setSaver = setSaverRef.current;
-      setSaverRef.current = null;
-      if (startupRef.current === startup) startupRef.current = null;
-      storageClosing.current = (async () => {
-        // Stop set retries and finish any native write before closing SQLite.
-        await setSaver?.close();
-        await startup.close();
-      })().catch((error) => {
-        console.warn('Could not close workout storage.', error);
-      });
-    };
-  }, [getStartup]);
-
-  const selectedExercise = exercises.find(
-    (exercise) => exercise.id === selectedExerciseId,
+    top();
+  }, [page, detailId]);
+  const nav = (
+    <View style={[s.row, { gap: 6, justifyContent: 'space-evenly' }]}>
+      {(['training', 'history'] as const).map((item) => {
+        const on = (item === 'history') === historyTab;
+        return (
+          <Pressable
+            key={item}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: on, disabled: t.busy || t.retrySet }}
+            disabled={t.busy || t.retrySet}
+            onPress={() => navigate(item)}
+            style={({ pressed }) => [
+              s.row,
+              {
+                minHeight: 42,
+                paddingHorizontal: 18,
+                borderRadius: 12,
+                backgroundColor: on ? c.pale : 'transparent',
+                opacity: pressed ? 0.65 : 1,
+              },
+            ]}
+          >
+            <Icon
+              name={item === 'training' ? 'bar' : 'history'}
+              color={on ? c.blue : c.mute}
+              size={19}
+            />
+            <Text style={{ color: on ? c.blue : c.mute, fontWeight: '700', fontSize: 14 }}>
+              {item === 'training' ? 'Training' : 'History'}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
-  const allExercisesComplete = exercises.every(
-    (exercise) => completedSetCount(exercise) === exercise.plannedSets,
+  async function finish() {
+    if (!t.active) return;
+    const id = t.active.id;
+    if (await t.finish()) {
+      setConfirm(false);
+      setEditingSet(null);
+      setSelected(null);
+      setDetailId(id);
+      setPage('summary');
+    }
+  }
+  const timer = (
+    <RestTimer
+      active={!!t.active}
+      until={t.active?.restUntil ?? null}
+      duration={t.duration}
+      locked={t.locked}
+      alerts={t.alerts}
+      onAlerts={t.toggleAlerts}
+      onDuration={t.chooseDuration}
+      onRest={t.setRest}
+    />
   );
-
-  function clearInputs() {
-    setWeightInput('');
-    setRepsInput('');
-    setInputError(null);
-  }
-
-  async function startWorkout() {
-    if (workoutStarted || isStarting) return;
-    const startup = getStartup();
-    setIsStarting(true);
-    setStartError(null);
-
-    try {
-      const id = await startup.start(sampleWorkout);
-      if (startupRef.current !== startup) return;
-      setExercises(createWorkoutExercises(sampleWorkout));
-      setSelectedExerciseId(null);
-      clearInputs();
-      setSessionId(id);
-    } catch {
-      if (startupRef.current === startup) {
-        setStartError('Couldn’t start your workout. Please try again.');
-      }
-    } finally {
-      if (startupRef.current === startup) setIsStarting(false);
-    }
-  }
-
-  function selectExercise(exerciseId: string) {
-    if (setSaverRef.current?.hasPending()) return;
-    setSelectedExerciseId(exerciseId);
-    clearInputs();
-  }
-
-  async function saveSet() {
-    if (!sessionId || !selectedExercise
-      || completedSetCount(selectedExercise) === selectedExercise.plannedSets) {
-      return;
-    }
-
-    const saver = getSetSaver();
-    // This also catches rapid taps before the disabled button has rerendered.
-    if (saver.isSaving()) return;
-    const retrying = saver.hasPending();
-    const record = retrying ? null : parseSetRecord(weightInput, repsInput);
-    if (!retrying && !record) {
-      setInputError('Enter a weight of 0 or more and a whole-number rep count of 0 or more.');
-      return;
-    }
-
-    setIsSavingSet(true);
-    setSetSaveError(null);
-    setInputError(null);
-    try {
-      const saved = await (retrying ? saver.retry() : saver.save({
-        sessionId,
-        exerciseId: selectedExercise.id,
-        setNumber: selectedExercise.sets.findIndex((set) => set === null) + 1,
-        record: record!,
-      }));
-      if (setSaverRef.current !== saver) return;
-      setExercises((current) => recordSet(current, saved.exerciseId, saved.record));
-      clearInputs();
-
-      if (saved.setNumber === selectedExercise.plannedSets) {
-        setSelectedExerciseId(null);
-        scrollView.current?.scrollTo({ y: 0, animated: true });
-      }
-    } catch {
-      if (setSaverRef.current === saver) {
-        setSetSaveError('Couldn’t save this set. Your values are still here. Please retry.');
-      }
-    } finally {
-      if (setSaverRef.current === saver) setIsSavingSet(false);
-    }
-  }
-
+  const title =
+    page === 'routine'
+      ? 'Edit routine'
+      : page === 'history'
+        ? detail
+          ? 'Workout details'
+          : 'Workout history'
+        : page === 'summary'
+          ? 'Workout saved'
+          : t.active
+            ? 'In session'
+            : 'Training dashboard';
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: c.white }}>
+      <StatusBar style="dark" />
+      <View style={{ borderBottomWidth: 1, borderColor: c.faint, backgroundColor: c.white }}>
+        <View style={{ width: '100%', maxWidth: 520, alignSelf: 'center', padding: 16 }}>
+          <Brand />
+        </View>
+        {nav}
+      </View>
+      <KeyboardAvoidingView
+        style={{ flex: 1, backgroundColor: c.bg }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          ref={scroll}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{
+            width: '100%',
+            maxWidth: 520,
+            alignSelf: 'center',
+            paddingHorizontal: 16,
+            paddingTop: 20,
+            paddingBottom: 36,
+            gap: 18,
+          }}
+        >
+          <View style={{ gap: 5 }}>
+            {(page === 'routine' || page === 'summary' || (page === 'history' && detail)) && (
+              <Link
+                disabled={t.busy}
+                onPress={() => navigate(page === 'routine' ? 'training' : 'history')}
+                icon="back"
+              >
+                {page === 'routine' ? 'Training' : 'History'}
+              </Link>
+            )}
+            <Text accessibilityRole="header" style={s.title}>
+              {title}
+            </Text>
+          </View>
+          {(!!t.error || !!t.notice) && (
+            <View style={[s.card, { padding: 12 }]}>
+              <Text accessibilityRole="alert" style={t.error ? s.error : s.body}>
+                {t.error || t.notice}
+              </Text>
+              {!t.ready && (
+                <Button secondary onPress={t.retryLoad}>
+                  Retry
+                </Button>
+              )}
+            </View>
+          )}
+          {!t.ready && !t.error && (
+            <ActivityIndicator accessibilityLabel="Opening workout log" color={c.blue} />
+          )}
+          {page === 'training' && (
+            <View style={{ gap: 18 }}>
+              <Hero
+                name={t.active?.name ?? t.plan.name}
+                exerciseCount={exercises.length}
+                sets={total}
+                active={!!t.active}
+                done={done}
+                locked={t.locked}
+                onPress={async () => {
+                  if (await t.start()) {
+                    setSelected(null);
+                    top();
+                  }
+                }}
+              />
+              {!!t.active?.restUntil && editingSet === null && timer}
+              {t.active && slot >= 0 && (
+                <SetEntry
+                  key={t.active.id + current.id + ':' + slot}
+                  exercise={current}
+                  index={slot}
+                  prior={previousSet(t.history, current.id, slot)}
+                  busy={t.busy}
+                  locked={t.locked}
+                  retry={t.retrySet}
+                  onCancel={editingSet === null ? undefined : () => setEditingSet(null)}
+                  onSave={async (record) => {
+                    const ok = await t.save(current.id, slot, record);
+                    if (ok) {
+                      setEditingSet(null);
+                      if (editingSet === null && completedSetCount(current) + 1 === current.plannedSets)
+                        setSelected(null);
+                    }
+                    return ok;
+                  }}
+                />
+              )}
+              {t.active && slot < 0 && (
+                <View style={s.card}>
+                  <Label color={c.green}>
+                    {done === total ? 'ALL SETS LOGGED' : 'EXERCISE COMPLETE'}
+                  </Label>
+                  <Text style={s.title}>{current.name}</Text>
+                  <SetRows exercise={current} history={t.history} onEdit={editSet} locked={t.locked} />
+                </View>
+              )}
+              {(!t.active || ((!t.active.restUntil || editingSet !== null) && done < total)) && timer}
+              <ExerciseList
+                exercises={exercises}
+                active={!!t.active}
+                selected={current.id}
+                locked={t.locked}
+                onEdit={() => navigate('routine')}
+                onSelect={(id) => {
+                  setEditingSet(null);
+                  setSelected(id);
+                  top();
+                }}
+              />
+              {t.active && slot >= 0 && completedSetCount(current) > 0 && (
+                <View style={s.card}>
+                  <Label>THIS SESSION · {current.name.toUpperCase()}</Label>
+                  <SetRows exercise={current} history={t.history} onEdit={editSet} locked={t.locked} />
+                </View>
+              )}
+              {t.active &&
+                (confirm ? (
+                  <View style={s.card}>
+                    <Text style={s.title}>Finish this workout?</Text>
+                    <Text style={s.body}>
+                      {done} of {total} sets logged. Your recorded sets will be saved in History.
+                    </Text>
+                    <View style={[s.row, { flexWrap: 'wrap' }]}>
+                      <Button disabled={t.locked} onPress={finish}>
+                        Finish workout
+                      </Button>
+                      <Link disabled={t.locked} onPress={() => setConfirm(false)}>
+                        Keep training
+                      </Link>
+                    </View>
+                  </View>
+                ) : (
+                  <Button
+                    secondary={done !== total}
+                    icon="check"
+                    disabled={t.locked}
+                    onPress={() => (done === total ? void finish() : setConfirm(true))}
+                  >
+                    Finish workout
+                  </Button>
+                ))}
+              {!t.active && <WeekCard history={t.history} onHistory={() => navigate('history')} />}
+            </View>
+          )}
+          {page === 'routine' && (
+            <View style={{ width: '100%', maxWidth: 720 }}>
+              <RoutineEditor
+                plan={t.plan}
+                locked={t.busy}
+                knownIds={
+                  new Map(
+                    [
+                      ...t.history
+                        .slice()
+                        .reverse()
+                        .flatMap((h) => h.exercises),
+                      ...t.plan.exercises,
+                    ].map((e) => [e.name.trim().toLowerCase(), e.id]),
+                  )
+                }
+                onCancel={() => navigate('training')}
+                onSave={async (p) => {
+                  if (await t.savePlan(p)) navigate('training');
+                }}
+              />
+            </View>
+          )}
+          {(page === 'summary' || page === 'history') && detail && (
+            <View style={{ width: '100%', maxWidth: 760, gap: 16 }}>
+              <SessionDetails
+                session={detail}
+                history={t.history.slice(t.history.indexOf(detail) + 1)}
+              />
+              <Button onPress={() => navigate('training')} icon="bar">
+                Back to training
+              </Button>
+            </View>
+          )}
+          {page === 'history' && !detail && (
+            <View style={{ gap: 12, width: '100%', maxWidth: 760 }}>
+              {!t.history.length && t.ready && (
+                <View style={[s.card, { alignItems: 'flex-start', padding: 24 }]}>
+                  <View style={s.tile}>
+                    <Icon name="history" color={c.blue} />
+                  </View>
+                  <Text style={s.title}>Your first workout goes here</Text>
+                  <Text style={s.body}>
+                    Finish a session to see the weight and reps you logged for each set.
+                  </Text>
+                  <Button secondary onPress={() => navigate('training')}>
+                    Go to training
+                  </Button>
+                </View>
+              )}
+              {t.history.map((h) => {
+                const totals = sessionTotals(h);
+                return (
+                  <Pressable
+                    key={h.id}
+                    accessibilityRole="button"
+                    onPress={() => setDetailId(h.id)}
+                    style={({ pressed }) => [s.card, s.between, pressed && { opacity: 0.75 }]}
+                  >
+                    <View style={{ gap: 6, flex: 1 }}>
+                      <Label>
+                        {h.endedAt
+                          ? new Date(h.endedAt)
+                              .toLocaleString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                                hour: 'numeric',
+                                minute: '2-digit',
+                              })
+                              .toUpperCase()
+                          : 'UNFINISHED'}
+                      </Label>
+                      <Text style={s.title}>{h.name}</Text>
+                      <Text style={s.body}>
+                        {totals.sets} sets · {totals.volume.toLocaleString()} lb volume
+                      </Text>
+                    </View>
+                    <Icon name="next" color={c.blue} />
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+export default function App() {
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.screen}>
-        <StatusBar style="dark" />
-        <KeyboardAvoidingView style={styles.keyboardArea} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <ScrollView ref={scrollView} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-            <Text style={styles.brand}>repward</Text>
-            <Text style={styles.eyebrow}>
-              {workoutStarted ? 'WORKOUT STARTED' : 'SAMPLE WORKOUT'}
-            </Text>
-            <Text style={styles.title}>{sampleWorkout.name}</Text>
-            <Text style={styles.description}>
-              {workoutStarted
-                ? allExercisesComplete
-                  ? 'All planned sets are recorded. Select an exercise to review your sets.'
-                  : 'Choose an exercise. You can follow the order or pick any available machine.'
-                : `${sampleWorkout.exercises.length} exercises, ready when you are.`}
-            </Text>
-
-            {!workoutStarted && (
-              <View>
-                {startError && (
-                  <Text style={styles.startError} accessibilityRole="alert">{startError}</Text>
-                )}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ disabled: isStarting, busy: isStarting }}
-                  disabled={isStarting}
-                  onPress={startWorkout}
-                  style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
-                >
-                  <View style={styles.startButtonContent} accessibilityLiveRegion="polite">
-                    {isStarting && <ActivityIndicator color="#FFFFFF" />}
-                    <Text style={styles.startButtonText}>
-                      {isStarting ? 'Starting workout…' : startError ? 'Retry' : 'Start Workout'}
-                    </Text>
-                  </View>
-                </Pressable>
-              </View>
-            )}
-
-            <Text style={styles.sectionTitle}>
-              {workoutStarted ? 'Choose your exercise' : 'Your exercises'}
-            </Text>
-            {exercises.map((exercise, index) => {
-              const isSelected = exercise.id === selectedExerciseId;
-              const savedSets = completedSetCount(exercise);
-              const isComplete = savedSets === exercise.plannedSets;
-
-              return (
-                <Pressable
-                  key={exercise.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${exercise.name}, ${savedSets} of ${exercise.plannedSets} sets completed${isComplete ? ', Complete' : ''}`}
-                  accessibilityState={{ disabled: !workoutStarted || setSaveLocked, selected: isSelected }}
-                  disabled={!workoutStarted || setSaveLocked}
-                  onPress={() => selectExercise(exercise.id)}
-                  style={({ pressed }) => [
-                    styles.exercise,
-                    isSelected && styles.selectedExercise,
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <Text style={styles.exerciseNumber}>{index + 1}</Text>
-                  <View style={styles.exerciseDetails}>
-                    <Text style={styles.exerciseName}>{exercise.name}</Text>
-                    <Text style={styles.exerciseMeta}>
-                      {workoutStarted
-                        ? `${savedSets} of ${exercise.plannedSets} sets completed`
-                        : `${exercise.plannedSets} planned sets`}
-                    </Text>
-                  </View>
-                  {isComplete && <Text style={styles.selectedLabel}>Complete</Text>}
-                  {isSelected && !isComplete && <Text style={styles.selectedLabel}>Selected</Text>}
-                </Pressable>
-              );
-            })}
-
-            {workoutStarted && (
-              <View style={styles.selection} accessibilityLiveRegion="polite">
-                <Text style={styles.selectionLabel}>CURRENT EXERCISE</Text>
-                <Text style={styles.selectionTitle}>
-                  {selectedExercise
-                    ? selectedExercise.name
-                    : allExercisesComplete ? 'All exercises complete' : 'Choose an exercise above'}
-                </Text>
-                {selectedExercise && (
-                  <View>
-                    <Text style={styles.description}>
-                      {completedSetCount(selectedExercise)} of {selectedExercise.plannedSets} sets completed
-                    </Text>
-                    {selectedExercise.sets.map((set, index) => (
-                      <Text key={index} style={styles.recordedSet}>
-                        Set {index + 1}: {set === null ? 'Not recorded' : `${set.weight} lb × ${set.reps} reps`}
-                      </Text>
-                    ))}
-                    {completedSetCount(selectedExercise) < selectedExercise.plannedSets ? (
-                      <View style={styles.entryForm}>
-                        <Text style={styles.inputLabel}>Weight (lb)</Text>
-                        <TextInput
-                          accessibilityLabel="Weight in pounds"
-                          style={styles.input}
-                          keyboardType="decimal-pad"
-                          value={weightInput}
-                          editable={!setSaveLocked}
-                          onChangeText={(value) => {
-                            if (!setSaverRef.current?.hasPending()) setWeightInput(value);
-                          }}
-                          placeholder="e.g. 50"
-                          placeholderTextColor="#65756A"
-                        />
-                        <Text style={styles.inputLabel}>Reps</Text>
-                        <TextInput
-                          accessibilityLabel="Reps"
-                          style={styles.input}
-                          keyboardType="number-pad"
-                          value={repsInput}
-                          editable={!setSaveLocked}
-                          onChangeText={(value) => {
-                            if (!setSaverRef.current?.hasPending()) setRepsInput(value);
-                          }}
-                          placeholder="e.g. 10"
-                          placeholderTextColor="#65756A"
-                        />
-                        {inputError && (
-                          <Text style={styles.inputError} accessibilityRole="alert">{inputError}</Text>
-                        )}
-                        {setSaveError && (
-                          <Text style={styles.inputError} accessibilityRole="alert">{setSaveError}</Text>
-                        )}
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityState={{ disabled: isSavingSet, busy: isSavingSet }}
-                          disabled={isSavingSet}
-                          onPress={saveSet}
-                          style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
-                        >
-                          <View style={styles.startButtonContent} accessibilityLiveRegion="polite">
-                            {isSavingSet && <ActivityIndicator color="#FFFFFF" />}
-                            <Text style={styles.startButtonText}>
-                              {isSavingSet ? 'Saving…' : setSaveError ? 'Retry' : 'Save Set'}
-                            </Text>
-                          </View>
-                        </Pressable>
-                      </View>
-                    ) : (
-                      <Text style={styles.recordedSet}>Exercise complete.</Text>
-                    )}
-                  </View>
-                )}
-              </View>
-            )}
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
+      <TrainingApp />
     </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#F7F8F3' },
-  keyboardArea: { flex: 1 },
-  content: { padding: 24, paddingBottom: 48, width: '100%', maxWidth: 520, alignSelf: 'center' },
-  brand: { fontSize: 22, fontWeight: '800', color: '#254937', marginBottom: 40 },
-  eyebrow: { fontSize: 12, fontWeight: '700', letterSpacing: 1.5, color: '#536454', marginBottom: 8 },
-  title: { fontSize: 36, fontWeight: '700', color: '#18291E', marginBottom: 12 },
-  description: { fontSize: 16, lineHeight: 24, color: '#536454' },
-  startButton: {
-    backgroundColor: '#254937',
-    borderRadius: 16,
-    minHeight: 56,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 24,
-  },
-  startButtonText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
-  startButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  startError: { fontSize: 16, lineHeight: 24, color: '#9C2727', marginTop: 16 },
-  pressed: { opacity: 0.75 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#18291E', marginTop: 32, marginBottom: 16 },
-  exercise: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 88,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 2,
-    borderColor: '#E1E5DC',
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-  },
-  selectedExercise: { borderColor: '#254937', backgroundColor: '#EEF4EB' },
-  exerciseNumber: { color: '#536454', fontSize: 16, fontWeight: '700', marginRight: 16 },
-  exerciseDetails: { flex: 1 },
-  exerciseName: { fontSize: 18, fontWeight: '600', color: '#18291E' },
-  exerciseMeta: { fontSize: 14, color: '#536454', marginTop: 6 },
-  selectedLabel: { fontSize: 13, fontWeight: '700', color: '#254937', marginLeft: 12 },
-  selection: { borderTopWidth: 1, borderTopColor: '#DCE2D7', marginTop: 20, paddingTop: 24 },
-  selectionLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 1.5, color: '#536454' },
-  selectionTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#18291E',
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  recordedSet: { fontSize: 16, color: '#18291E', marginTop: 12 },
-  entryForm: { marginTop: 20 },
-  inputLabel: { fontSize: 16, fontWeight: '600', color: '#18291E', marginBottom: 8 },
-  input: {
-    minHeight: 48,
-    borderWidth: 1,
-    borderColor: '#65756A',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    color: '#18291E',
-    backgroundColor: '#FFFFFF',
-    fontSize: 18,
-    marginBottom: 16,
-  },
-  inputError: { fontSize: 14, color: '#9C2727' },
-});
