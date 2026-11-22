@@ -166,7 +166,9 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
     if (result.changes !== 1) throw new Error('Planned set not found.');
   }
 
-  async function createSession(sessionId: string, plan: WorkoutPlan): Promise<void> {
+  async function createSession(
+    sessionId: string, plan: WorkoutPlan, startedAt = new Date().toISOString(),
+  ): Promise<void> {
     validateId(sessionId);
     validateExercises(plan.exercises);
     // Capture values before waiting in the queue; later plan edits can't affect
@@ -178,7 +180,7 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
     return schedule(() => db.withTransactionAsync(async () => {
       await db.runAsync(
         'INSERT INTO sessions (id, name, started_at, plan_id, min_reps, max_reps) VALUES (?, ?, ?, ?, ?, ?)',
-        sessionId, name, new Date().toISOString(), planId, min, max,
+        sessionId, name, startedAt, planId, min, max,
       );
       for (const [position, exercise] of exercises.entries()) {
         await db.runAsync(

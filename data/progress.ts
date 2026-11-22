@@ -182,6 +182,22 @@ export function sessionTotals(session: SessionSnapshot) {
   return { sets, volume };
 }
 
+export function sessionDurationText({ startedAt, endedAt }: Pick<SessionSnapshot, 'startedAt' | 'endedAt'>) {
+  if (!startedAt || !endedAt) return null;
+  const elapsed = Date.parse(endedAt) - Date.parse(startedAt);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return null;
+
+  const totalSeconds = Math.floor(elapsed / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (hours) parts.push(hours + 'h');
+  if (minutes) parts.push(minutes + 'm');
+  if (seconds || !parts.length) parts.push(seconds + 's');
+  return parts.join(' ');
+}
+
 export function clockText(seconds: number) {
   return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
 }

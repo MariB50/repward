@@ -100,14 +100,15 @@ export function useTraining() {
   function start() {
     return run('Couldn’t start this workout. Try again.', async (conn) => {
       if (active) return;
-      const id = await conn.startup.start(plan);
+      const startedAt = new Date().toISOString();
+      const id = await conn.startup.start(plan, startedAt);
       if (live.current === conn)
         setActive({
           id,
           name: plan.name,
           planId: plan.id,
           repRange: plan.repRange,
-          startedAt: new Date().toISOString(),
+          startedAt,
           endedAt: null,
           restUntil: null,
           exercises: createWorkoutExercises(plan),

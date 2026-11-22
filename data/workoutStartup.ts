@@ -30,7 +30,7 @@ export function createWorkoutStartup(
     return preparation;
   }
 
-  function start(plan: WorkoutPlan): Promise<string> {
+  function start(plan: WorkoutPlan, startedAt = new Date().toISOString()): Promise<string> {
     if (closed) return Promise.reject(new Error('Workout startup is closed.'));
     if (starting) return starting;
     if (sessionId !== null) return Promise.resolve(sessionId);
@@ -40,7 +40,7 @@ export function createWorkoutStartup(
       const storage = await prepare();
       if (closed) throw new Error('Workout startup is closed.');
       const id = createSessionId();
-      await storage.createSession(id, snapshot);
+      await storage.createSession(id, snapshot, startedAt);
       if (closed) throw new Error('Workout startup is closed.');
       sessionId = id;
       return id;

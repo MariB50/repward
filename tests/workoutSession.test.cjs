@@ -111,3 +111,20 @@ test('set entry starts from the saved slot, latest exercise result, or zero', ()
   });
   assert.deepEqual(setEntryDefaults({ ...exercise, sets: [earlier, recent] }, 0, history).initial, earlier);
 });
+
+test('workout duration formats elapsed time when both timestamps are usable', () => {
+  const { sessionDurationText } = require('../data/progress.ts');
+  const start = '2026-11-22T23:45:00.000Z';
+  for (const [endedAt, expected] of [
+    ['2026-11-23T00:47:03.999Z', '1h 2m 3s'],
+    ['2026-11-22T23:50:04.000Z', '5m 4s'],
+    ['2026-11-22T23:45:42.000Z', '42s'],
+    [start, '0s'],
+    ['2026-11-22T23:44:59.000Z', null],
+    ['invalid', null],
+    [null, null],
+  ]) {
+    assert.equal(sessionDurationText({ startedAt: start, endedAt }), expected);
+  }
+  assert.equal(sessionDurationText({ startedAt: null, endedAt: start }), null);
+});

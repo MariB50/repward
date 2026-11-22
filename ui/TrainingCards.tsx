@@ -2,7 +2,14 @@ import { ImageBackground, Pressable, Text, View } from 'react-native';
 import type { SessionSnapshot } from '../data/workoutStorage';
 import type { WorkoutExercise } from '../data/workoutSession';
 import { completedSetCount } from '../data/workoutSession';
-import { changeFrom, exerciseProgress, previousSet, sessionTotals, setEntryDefaults } from '../data/progress';
+import {
+  changeFrom,
+  exerciseProgress,
+  previousSet,
+  sessionDurationText,
+  sessionTotals,
+  setEntryDefaults,
+} from '../data/progress';
 import { catalogExerciseFor } from '../data/exerciseCatalog';
 import { ExercisePhoto } from './ExercisePhoto';
 import { Button, c, digits, Icon, Label, Link, s } from './kit';
@@ -255,6 +262,7 @@ export function SessionDetails({
   history: SessionSnapshot[];
 }) {
   const totals = sessionTotals(session);
+  const elapsed = sessionDurationText(session);
   return (
     <View style={{ gap: 16 }}>
       <View style={[s.card, { backgroundColor: c.navy, borderWidth: 0 }]}>
@@ -268,6 +276,7 @@ export function SessionDetails({
         <Text style={[s.title, { color: c.white, fontSize: 30, lineHeight: 37 }]}>{session.name}</Text>
         <Text style={{ color: '#DAE2F3' }}>
           {totals.sets} sets logged · {totals.volume.toLocaleString()} lb total volume
+          {elapsed && ' · ' + elapsed}
         </Text>
       </View>
       {session.exercises.map((e) => (

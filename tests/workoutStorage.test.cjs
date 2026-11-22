@@ -444,9 +444,11 @@ test('history retains set order and plan snapshots across repeated sessions', as
   const { storage } = await fixture(t);
   let sequence = 0;
   const startup = createWorkoutStartup(async () => storage, () => String(++sequence));
-  const first = await startup.start(sampleWorkout);
+  const startedAt = '2026-11-22T18:00:00.000Z';
+  const first = await startup.start(sampleWorkout, startedAt);
   await storage.saveSet(first, 'bench-press', 1, { weight: 50, reps: 8 }, 10000);
-  await storage.finishSession(first, createWorkoutExercises(sampleWorkout));
+  const endedAt = new Date('2026-11-22T18:42:00.000Z');
+  await storage.finishSession(first, createWorkoutExercises(sampleWorkout), endedAt);
   startup.finished(first);
   const plan = { ...sampleWorkout, name: 'Pull day', exercises: [sampleWorkout.exercises[1]] };
   assert.equal(await startup.start(plan), '2');
@@ -455,6 +457,8 @@ test('history retains set order and plan snapshots across repeated sessions', as
   assert.equal(active.endedAt, null);
   assert.deepEqual(active.exercises.map(e => e.id), ['seated-row']);
   assert.equal(ended.name, 'Upper body');
+  assert.equal(ended.startedAt, startedAt);
+  assert.equal(ended.endedAt, endedAt.toISOString());
   assert.deepEqual(ended.exercises[0].sets, [{ weight: 50, reps: 8 }, null]);
   assert.equal(ended.restUntil, null);
   await assert.rejects(storage.setRest(first, 30000), /Active workout not found/);

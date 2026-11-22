@@ -15,7 +15,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { WorkoutPlan } from './data/sampleWorkout';
 import { useTraining } from './data/useTraining';
 import { completedSetCount, createWorkoutExercises } from './data/workoutSession';
-import { sessionTotals } from './data/progress';
+import { sessionDurationText, sessionTotals } from './data/progress';
 import { Brand, Button, c, Icon, Label, Link, s } from './ui/kit';
 import { RestTimer } from './ui/RestTimer';
 import { RoutineEditor } from './ui/RoutineEditor';
@@ -456,6 +456,7 @@ function TrainingApp() {
               )}
               {t.history.map((h) => {
                 const totals = sessionTotals(h);
+                const elapsed = sessionDurationText(h);
                 return (
                   <Pressable
                     key={h.id}
@@ -480,6 +481,7 @@ function TrainingApp() {
                       <Text style={s.title}>{h.name}</Text>
                       <Text style={s.body}>
                         {totals.sets} sets · {totals.volume.toLocaleString()} lb volume
+                        {elapsed && ' · ' + elapsed}
                       </Text>
                     </View>
                     <Icon name="next" color={c.blue} />
