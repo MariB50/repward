@@ -1,23 +1,152 @@
+import type { RepRange } from './sampleWorkout';
 import type { SessionSnapshot } from './workoutStorage';
 import type { SetRecord, WorkoutExercise } from './workoutSession';
 
+export function parseRepRange(minText: string, maxText: string): RepRange | undefined | null {
+  const lower = minText.trim();
+  const upper = maxText.trim();
+  if (!lower && !upper) return undefined;
+  if (!/^\d+$/.test(lower) || !/^\d+$/.test(upper)) return null;
+  const min = Number(lower);
+  const max = Number(upper);
+  return Number.isSafeInteger(min) && Number.isSafeInteger(max) && min > 0 && max >= min
+    ? { min, max }
+    : null;
+}
+
+export function repRangeText(range: RepRange) {
+  return range.min === range.max ? String(range.min) : range.min + '–' + range.max;
+}
+
+type SetGoal = { weight: number; reps: number | null };
+type WorkoutReference = Pick<SessionSnapshot, 'name' | 'planId' | 'repRange'>;
+type SetEntryDefaults = {
+  initial: SetRecord;
+  reference: SetRecord | null;
+  referenceLabel: string;
+  goal?: SetGoal | null;
+};
+
+export function suggestedWeight(record: SetRecord, range: RepRange, workingWeight = 0) {
+  const { weight, reps } = record;
+  if (weight <= 0 || weight < workingWeight || reps <= range.max) return null;
+  return weightAtReps(record, range.max);
+}
+
+function weightAtReps({ weight, reps }: SetRecord, targetReps: number) {
+  // Invert the Epley estimate at the nearest end of the range and cap the adjustment at 10%.
+  const change = (reps - targetReps) / (30 + targetReps);
+  const direction = Math.sign(change);
+  const jump = Math.min(Math.abs(change), 0.1);
+  const step = weight >= 100 ? 5 : weight >= 50 ? 2.5 : weight >= 25 ? 1 : weight >= 5 ? 0.5 : 0.1;
+  const maxSteps = Math.floor((weight * 0.1) / step);
+  const steps = Math.min(maxSteps, Math.max(1, Math.round((weight * jump) / step)));
+  if (!steps) return null;
+  const next = Number((weight + direction * steps * step).toPrecision(15));
+  return Number.isFinite(next) && Math.sign(next - weight) === direction ? next : null;
+}
+
+function nextRepGoal(target: SetGoal, range: RepRange): SetGoal {
+  if (target.reps === null) return target;
+  return {
+    weight: target.weight,
+    reps: Math.max(range.min, Math.min(target.reps + 1, Number.MAX_SAFE_INTEGER)),
+  };
+}
+
+function nextSetGoal(previous: SetRecord, range: RepRange): SetGoal | null {
+  if (previous.reps >= range.min && previous.reps <= range.max) {
+    return nextRepGoal(previous, range);
+  }
+  const weight = previous.weight > 0 && previous.reps < range.min
+    ? weightAtReps(previous, range.min)
+    : suggestedWeight(previous, range);
+  return weight === null ? null : { weight, reps: null };
+}
+
+export function exerciseProgress(
+  session: WorkoutReference,
+  exerciseId: string,
+  history: SessionSnapshot[],
+) {
+  const { repRange } = session;
+  const results: SetRecord[] = [];
+  for (const past of history) {
+    if (!past.endedAt || (past.planId ? past.planId !== session.planId : past.name !== session.name)) {
+      continue;
+    }
+    const set = lastExerciseSet(past, exerciseId);
+    if (!set) continue;
+    results.push(set);
+    // Start from the most recent working set recorded before the workout had a range.
+    if (!past.repRange && set.reps > 0) break;
+  }
+
+  const reference = results[0] ?? null;
+  let target: SetGoal | null = null;
+  let workingWeight = 0;
+  if (repRange) {
+    for (const result of results.reverse()) {
+      if (!result.reps || result.weight < workingWeight) continue;
+      workingWeight = result.weight;
+      const increase = suggestedWeight(result, repRange);
+      const next = increase === null ? result : { weight: increase, reps: null };
+      // Preserve a pending increase on lighter days. More reps at the working
+      // weight can still earn a larger increase before the first one is tried.
+      if (!target || next.weight >= target.weight) target = next;
+    }
+  }
+  return { reference, target, workingWeight };
+}
+
+function lastExerciseSet(session: SessionSnapshot, exerciseId: string) {
+  return session.exercises.find((exercise) => exercise.id === exerciseId)
+    ?.sets.findLast((set) => set !== null) ?? null;
+}
+
 function lastLoggedSet(history: SessionSnapshot[], exerciseId: string): SetRecord | null {
   for (const session of history) {
-    const recent = session.exercises
-      .find((exercise) => exercise.id === exerciseId)
-      ?.sets.findLast((set) => set !== null);
+    const recent = lastExerciseSet(session, exerciseId);
     if (recent) return recent;
   }
   return null;
 }
 
-export function setEntryDefaults(exercise: WorkoutExercise, index: number, history: SessionSnapshot[]) {
-  const previous = exercise.sets.slice(0, index).findLast((set) => set !== null);
-  const reference = previous ?? lastLoggedSet(history, exercise.id);
+export function setEntryDefaults(
+  exercise: WorkoutExercise,
+  index: number,
+  history: SessionSnapshot[],
+  session?: WorkoutReference,
+): SetEntryDefaults {
+  const previous = exercise.sets.findLast((set, slot) => slot < index && set !== null) ?? null;
+  const saved = exercise.sets[index];
+  if (!session?.repRange) {
+    const reference = previous ?? lastLoggedSet(history, exercise.id);
+    return {
+      initial: saved ?? reference ?? { weight: 0, reps: 0 },
+      reference,
+      referenceLabel: previous ? 'previous set' : 'last time',
+    };
+  }
+
+  const range = session.repRange;
+  if (previous) {
+    const goal = saved ? null : nextSetGoal(previous, range);
+    return {
+      initial: saved ?? { ...previous, weight: goal?.weight ?? previous.weight },
+      reference: previous,
+      referenceLabel: 'previous set',
+      goal,
+    };
+  }
+
+  const { reference, target } = exerciseProgress(session, exercise.id, history);
+  const recommended = target && { weight: target.weight, reps: target.reps ?? reference?.reps ?? 0 };
   return {
-    initial: exercise.sets[index] ?? reference ?? { weight: 0, reps: 0 },
+    initial: saved ?? recommended ?? reference ?? lastLoggedSet(history, exercise.id) ?? { weight: 0, reps: 0 },
     reference,
-    referenceLabel: previous ? 'previous set' : 'last time',
+    referenceLabel: 'last time',
+    goal: !saved && target ? nextRepGoal(target, range) : null,
   };
 }
 

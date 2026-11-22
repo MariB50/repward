@@ -2,7 +2,7 @@ import { ImageBackground, Pressable, Text, View } from 'react-native';
 import type { SessionSnapshot } from '../data/workoutStorage';
 import type { WorkoutExercise } from '../data/workoutSession';
 import { completedSetCount } from '../data/workoutSession';
-import { changeFrom, previousSet, sessionTotals } from '../data/progress';
+import { changeFrom, exerciseProgress, previousSet, sessionTotals, setEntryDefaults } from '../data/progress';
 import { catalogExerciseFor } from '../data/exerciseCatalog';
 import { ExercisePhoto } from './ExercisePhoto';
 import { Button, c, digits, Icon, Label, Link, s } from './kit';
@@ -273,7 +273,7 @@ export function SessionDetails({
       {session.exercises.map((e) => (
         <View key={e.id} style={s.card}>
           <Text style={[s.title, { fontSize: 19 }]}>{e.name}</Text>
-          <SetRows exercise={e} history={history} />
+          <SetRows exercise={e} session={session} history={history} />
         </View>
       ))}
     </View>
@@ -281,19 +281,27 @@ export function SessionDetails({
 }
 export function SetRows({
   exercise,
+  session,
   history,
   onEdit,
   locked,
 }: {
   exercise: WorkoutExercise;
+  session: SessionSnapshot;
   history: SessionSnapshot[];
   onEdit?: (index: number) => void;
   locked?: boolean;
 }) {
+  const progression = !onEdit && session.repRange ? exerciseProgress(session, exercise.id, history) : null;
   return (
     <View style={{ gap: 8 }}>
       {exercise.sets.map((value, i) => {
-        const previous = previousSet(history, exercise.id, i);
+        const comparison = value && (onEdit
+          ? setEntryDefaults(exercise, i, history, session)
+          : {
+              reference: progression ? progression.reference : previousSet(history, exercise.id, i),
+              referenceLabel: 'last time',
+            });
         return (
           <View
             key={i}
@@ -307,9 +315,9 @@ export function SetRows({
               <Text style={{ fontWeight: '700', color: value ? c.ink : c.mute }}>
                 {value ? value.weight + ' lb × ' + value.reps + ' reps' : 'Unlogged'}
               </Text>
-              {value && previous && (
+              {value && comparison?.reference && (
                 <Text style={{ fontSize: 12, color: c.blue }}>
-                  {changeFrom(value, previous)} vs. last time
+                  {changeFrom(value, comparison.reference)} vs. {comparison.referenceLabel}
                 </Text>
               )}
             </View>

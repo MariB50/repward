@@ -1,6 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
-import type { WorkoutPlan } from './sampleWorkout';
+import type { RepRange, WorkoutPlan } from './sampleWorkout';
 import type { SetRecord, WorkoutExercise } from './workoutSession';
 
 // These are the Expo methods used here. Tests supply the same operations using
@@ -10,18 +10,23 @@ export type WorkoutDatabase = Pick<
   'execAsync' | 'runAsync' | 'getFirstAsync' | 'getAllAsync' | 'withTransactionAsync' | 'closeAsync'
 >;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export type SessionSnapshot = {
   id: string;
   name: string;
+  planId?: string;
+  repRange?: RepRange;
   startedAt: string | null;
   endedAt: string | null;
   restUntil: number | null;
   exercises: WorkoutExercise[];
 };
 
-type SessionRow = Omit<SessionSnapshot, 'exercises'> & {
+type SessionRow = Omit<SessionSnapshot, 'exercises' | 'planId' | 'repRange'> & {
+  planId: string | null;
+  minReps: number | null;
+  maxReps: number | null;
   exerciseId: string;
   exerciseName: string;
   plannedSets: number;
@@ -98,20 +103,34 @@ function validateExercises(exercises: WorkoutPlan['exercises']) {
 /** Use one storage instance per connection; all operations share its write queue. */
 export async function createWorkoutStorage(db: WorkoutDatabase) {
   const version = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  if (version && version.user_version > SCHEMA_VERSION) {
+  const currentVersion = version?.user_version ?? 0;
+  if (currentVersion > SCHEMA_VERSION) {
     throw new Error('This workout database was created by a newer app version.');
   }
 
   // Foreign keys are connection settings, so enable them before any transaction.
   await db.execAsync('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-  if ((version?.user_version ?? 0) < SCHEMA_VERSION) {
+  if (currentVersion < SCHEMA_VERSION) {
     await db.withTransactionAsync(async () => {
-      if (!version || version.user_version === 0) await db.execAsync(SCHEMA_SQL);
+      if (currentVersion === 0) await db.execAsync(SCHEMA_SQL);
+      if (currentVersion < 2) {
+        await db.execAsync(`
+          ALTER TABLE sessions ADD COLUMN name TEXT NOT NULL DEFAULT 'Upper body';
+          ALTER TABLE sessions ADD COLUMN started_at TEXT;
+          ALTER TABLE sessions ADD COLUMN rest_until INTEGER;
+          CREATE TABLE preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        `);
+      }
       await db.execAsync(`
-        ALTER TABLE sessions ADD COLUMN name TEXT NOT NULL DEFAULT 'Upper body';
-        ALTER TABLE sessions ADD COLUMN started_at TEXT;
-        ALTER TABLE sessions ADD COLUMN rest_until INTEGER;
-        CREATE TABLE preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        ALTER TABLE sessions ADD COLUMN plan_id TEXT;
+        ALTER TABLE sessions ADD COLUMN min_reps INTEGER CHECK (
+          min_reps IS NULL OR (typeof(min_reps) = 'integer' AND min_reps BETWEEN 1 AND 9007199254740991)
+        );
+        ALTER TABLE sessions ADD COLUMN max_reps INTEGER CHECK (
+          (min_reps IS NULL AND max_reps IS NULL)
+          OR (min_reps IS NOT NULL AND typeof(max_reps) = 'integer'
+            AND max_reps BETWEEN min_reps AND 9007199254740991)
+        );
       `);
       await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
@@ -153,11 +172,14 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
     // Capture values before waiting in the queue; later plan edits can't affect
     // this session's original names, order or planned set counts.
     const exercises = plan.exercises.map((exercise) => ({ ...exercise }));
-    const name = plan.name;
+    const { id: planId, name } = plan;
+    const { min, max } = plan.repRange ?? { min: null, max: null };
 
     return schedule(() => db.withTransactionAsync(async () => {
-      await db.runAsync('INSERT INTO sessions (id, name, started_at) VALUES (?, ?, ?)',
-        sessionId, name, new Date().toISOString());
+      await db.runAsync(
+        'INSERT INTO sessions (id, name, started_at, plan_id, min_reps, max_reps) VALUES (?, ?, ?, ?, ?, ?)',
+        sessionId, name, new Date().toISOString(), planId, min, max,
+      );
       for (const [position, exercise] of exercises.entries()) {
         await db.runAsync(
           `INSERT INTO session_exercises (session_id, exercise_id, name, planned_sets, position)
@@ -254,6 +276,7 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
     return schedule(async () => {
       const rows = await db.getAllAsync<SessionRow>(`
         SELECT s.id, s.name, s.started_at AS startedAt, s.ended_at AS endedAt, s.rest_until AS restUntil,
+          s.plan_id AS planId, s.min_reps AS minReps, s.max_reps AS maxReps,
           e.exercise_id AS exerciseId, e.name AS exerciseName, e.planned_sets AS plannedSets,
           r.set_number AS setNumber, r.weight, r.reps
         FROM sessions s JOIN session_exercises e ON e.session_id = s.id
@@ -266,6 +289,10 @@ export async function createWorkoutStorage(db: WorkoutDatabase) {
         if (!session || session.id !== row.id) {
           session = { id: row.id, name: row.name, startedAt: row.startedAt, endedAt: row.endedAt,
             restUntil: row.restUntil, exercises: [] };
+          if (row.planId !== null) session.planId = row.planId;
+          if (row.minReps !== null && row.maxReps !== null) {
+            session.repRange = { min: row.minReps, max: row.maxReps };
+          }
           sessions.push(session);
         }
         let exercise = session.exercises.at(-1);

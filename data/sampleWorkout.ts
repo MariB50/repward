@@ -4,10 +4,13 @@ export type Exercise = {
   plannedSets: number;
 };
 
+export type RepRange = { min: number; max: number };
+
 export type WorkoutPlan = {
   id: string;
   name: string;
   exercises: Exercise[];
+  repRange?: RepRange;
 };
 
 export const sampleWorkout: WorkoutPlan = {

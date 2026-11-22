@@ -276,14 +276,14 @@ test('records survive closing/reopening a file database; close drains pending wr
     'SELECT weight, reps FROM set_results WHERE session_id = ? AND exercise_id = ? AND set_number = 1',
     sessionId, 'bench-press',
   ), { weight: 50, reps: 10 });
-  assert.equal((await reopenedDb.getFirstAsync('PRAGMA user_version')).user_version, 2);
+  assert.equal((await reopenedDb.getFirstAsync('PRAGMA user_version')).user_version, 3);
   assert.equal((await reopenedDb.getFirstAsync('PRAGMA foreign_keys')).foreign_keys, 1);
 });
 
 test('initialization refuses a newer database version without creating tables', async (t) => {
   const db = adaptDatabase(new DatabaseSync(':memory:'));
   t.after(() => db.closeAsync());
-  await db.execAsync('PRAGMA user_version = 3');
+  await db.execAsync('PRAGMA user_version = 4');
   await assert.rejects(createWorkoutStorage(db), /newer app version/);
   assert.equal((await db.getFirstAsync(
     "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table'",
@@ -388,6 +388,9 @@ test('migrating a version-one log preserves partial work and can resume its rest
   await original.createSession('old', sampleWorkout);
   await original.saveSet('old', 'bench-press', 1, { weight: 65, reps: 8 });
   await db.execAsync(`
+    ALTER TABLE sessions DROP COLUMN max_reps;
+    ALTER TABLE sessions DROP COLUMN min_reps;
+    ALTER TABLE sessions DROP COLUMN plan_id;
     DROP TABLE preferences;
     ALTER TABLE sessions DROP COLUMN rest_until;
     ALTER TABLE sessions DROP COLUMN started_at;
@@ -407,6 +410,34 @@ test('migrating a version-one log preserves partial work and can resume its rest
   assert.equal((await storage.readSessions())[0].restUntil, 35000);
   await storage.setRest('old', null);
   assert.equal((await storage.readSessions())[0].restUntil, null);
+});
+
+test('migrating a version-two log keeps its sets and snapshots the range on new sessions', async (t) => {
+  const db = adaptDatabase(new DatabaseSync(':memory:'));
+  const original = await createWorkoutStorage(db);
+  await original.createSession('old', sampleWorkout);
+  await original.saveSet('old', 'bench-press', 1, { weight: 100, reps: 13 });
+  await original.finishSession('old', createWorkoutExercises(sampleWorkout));
+  await db.execAsync(`
+    ALTER TABLE sessions DROP COLUMN max_reps;
+    ALTER TABLE sessions DROP COLUMN min_reps;
+    ALTER TABLE sessions DROP COLUMN plan_id;
+    PRAGMA user_version = 2;
+  `);
+  const storage = await createWorkoutStorage(db);
+  t.after(() => storage.close());
+  const plan = { ...sampleWorkout, repRange: { min: 8, max: 12 } };
+  const creating = storage.createSession('new', plan);
+  plan.repRange.max = 15;
+  await creating;
+
+  const [active, legacy] = await storage.readSessions();
+  assert.equal(active.planId, plan.id);
+  assert.equal(active.endedAt, null);
+  assert.deepEqual(active.repRange, { min: 8, max: 12 });
+  assert.equal(legacy.repRange, undefined);
+  assert.deepEqual(legacy.exercises[0].sets, [{ weight: 100, reps: 13 }, null]);
+  await assert.rejects(storage.createSession('invalid', { ...plan, repRange: { min: 12, max: 8 } }), /CHECK constraint failed/);
 });
 
 test('history retains set order and plan snapshots across repeated sessions', async (t) => {

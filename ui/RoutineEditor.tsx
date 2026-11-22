@@ -3,6 +3,7 @@ import { Keyboard, Pressable, Text, TextInput, View } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import type { Exercise, WorkoutPlan } from '../data/sampleWorkout';
 import { catalogExerciseFor, exerciseNameKey, type CatalogExercise } from '../data/exerciseCatalog';
+import { parseRepRange } from '../data/progress';
 import { ExercisePhoto } from './ExercisePhoto';
 import { ExercisePicker } from './ExercisePicker';
 import { ExerciseOrderEditor } from './ExerciseOrderEditor';
@@ -22,6 +23,8 @@ export function RoutineEditor({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(plan.name);
+  const [minReps, setMinReps] = useState(plan.repRange ? String(plan.repRange.min) : '');
+  const [maxReps, setMaxReps] = useState(plan.repRange ? String(plan.repRange.max) : '');
   const [rows, setRows] = useState(
     plan.exercises.map((e) => ({ id: e.id, name: e.name, sets: String(e.plannedSets) })),
   );
@@ -73,6 +76,11 @@ export function RoutineEditor({
       setError('Name your workout and add at least one exercise.');
       return;
     }
+    const repRange = parseRepRange(minReps, maxReps);
+    if (repRange === null) {
+      setError('Enter two positive whole numbers for the rep range. The maximum must be at least the minimum.');
+      return;
+    }
     if (rows.some((row) => !/^\d+$/.test(row.sets) || Number(row.sets) < 1 || Number(row.sets) > 99)) {
       setError('Enter 1 to 99 sets per exercise.');
       return;
@@ -81,6 +89,7 @@ export function RoutineEditor({
     onSave({
       ...plan,
       name: name.trim(),
+      repRange,
       exercises: rows.map((row) => ({ id: row.id, name: row.name, plannedSets: Number(row.sets) })),
     });
   }
@@ -99,6 +108,38 @@ export function RoutineEditor({
           placeholder="e.g. Leg day"
           placeholderTextColor={c.mute}
         />
+      </View>
+      <View style={s.card}>
+        <Label>REP RANGE (OPTIONAL)</Label>
+        <Text style={s.body}>Set a target for each set in this workout.</Text>
+        <View style={s.row}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.body}>Minimum reps</Text>
+            <TextInput
+              accessibilityLabel="Minimum reps"
+              editable={!locked}
+              keyboardType="number-pad"
+              value={minReps}
+              onChangeText={setMinReps}
+              placeholder="e.g. 8"
+              placeholderTextColor={c.mute}
+              style={s.input}
+            />
+          </View>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.body}>Maximum reps</Text>
+            <TextInput
+              accessibilityLabel="Maximum reps"
+              editable={!locked}
+              keyboardType="number-pad"
+              value={maxReps}
+              onChangeText={setMaxReps}
+              placeholder="e.g. 12"
+              placeholderTextColor={c.mute}
+              style={s.input}
+            />
+          </View>
+        </View>
       </View>
       <View style={s.card}>
         <View style={[s.between, { flexWrap: 'wrap', columnGap: 12, rowGap: 0 }]}>

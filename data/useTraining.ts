@@ -105,6 +105,8 @@ export function useTraining() {
         setActive({
           id,
           name: plan.name,
+          planId: plan.id,
+          repRange: plan.repRange,
           startedAt: new Date().toISOString(),
           endedAt: null,
           restUntil: null,

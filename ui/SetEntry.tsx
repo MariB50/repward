@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Keyboard, Text, TextInput, View } from 'react-native';
 import { parseSetRecord, type SetRecord, type WorkoutExercise } from '../data/workoutSession';
 import type { SessionSnapshot } from '../data/workoutStorage';
-import { changeFrom, setEntryDefaults } from '../data/progress';
+import { changeFrom, repRangeText, setEntryDefaults } from '../data/progress';
 import { Button, c, Label, Link, s } from './kit';
 import { NumberWheel } from './NumberWheel';
 
 export function SetEntry({
   exercise,
   index,
+  session,
   history,
   locked,
   busy,
@@ -18,6 +19,7 @@ export function SetEntry({
 }: {
   exercise: WorkoutExercise;
   index: number;
+  session: SessionSnapshot;
   history: SessionSnapshot[];
   locked: boolean;
   busy: boolean;
@@ -25,7 +27,10 @@ export function SetEntry({
   onSave: (record: SetRecord | null) => Promise<boolean>;
   onCancel?: () => void;
 }) {
-  const { initial, reference, referenceLabel } = setEntryDefaults(exercise, index, history);
+  const { initial, reference, referenceLabel, goal } = useMemo(
+    () => setEntryDefaults(exercise, index, history, session),
+    [exercise, index, history, session],
+  );
   const [draft, setDraft] = useState(initial);
   const [typed, setTyped] = useState<{ weight: string; reps: string } | null>(null);
   const [error, setError] = useState('');
@@ -64,8 +69,16 @@ export function SetEntry({
       </View>
       <Text style={s.title}>{exercise.name}</Text>
       {reference && (
-        <Text style={s.body}>
+        <Text style={[s.body, { fontSize: 13 }]}>
           {referenceLabel === 'last time' ? 'Last time' : 'Previous set'} · {reference.weight} lb × {reference.reps} reps
+        </Text>
+      )}
+      {goal && !onCancel && (
+        <Text accessibilityLiveRegion="polite" style={[s.body, { color: c.blue, fontSize: 14 }]}>
+          {goal.reps === null
+            ? 'Try ' + goal.weight + ' lb'
+            : 'Aim for ' + goal.reps + (goal.reps === 1 ? ' rep' : ' reps')
+              + (goal.weight > 0 ? ' at ' + goal.weight + ' lb' : '')}
         </Text>
       )}
       <View style={s.row}>
@@ -93,7 +106,7 @@ export function SetEntry({
           )}
         </View>
         <View style={{ flex: 1, gap: 7 }}>
-          <Label>REPS</Label>
+          <Label>{session.repRange ? 'REPS · ' + repRangeText(session.repRange) : 'REPS'}</Label>
           {typed ? (
             <TextInput
               selectTextOnFocus
@@ -117,7 +130,7 @@ export function SetEntry({
         </View>
       </View>
       <View style={[s.between, { justifyContent: 'flex-end' }]}>
-        {input && reference && (
+        {input && reference && (!session.repRange || onCancel) && (
           <Text style={[s.body, { color: c.blue, flex: 1 }]}>
             {changeFrom(input, reference)} vs. {referenceLabel}
           </Text>

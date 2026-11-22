@@ -299,6 +299,7 @@ function TrainingApp() {
                     key={t.active.id + current.id + ':' + slot}
                     exercise={current}
                     index={slot}
+                    session={t.active}
                     history={t.history}
                     busy={t.busy}
                     locked={t.locked}
@@ -324,7 +325,13 @@ function TrainingApp() {
                       {done === total ? 'ALL SETS LOGGED' : 'EXERCISE COMPLETE'}
                     </Label>
                     <Text style={s.title}>{current.name}</Text>
-                    <SetRows exercise={current} history={t.history} onEdit={editSet} locked={t.locked} />
+                    <SetRows
+                      exercise={current}
+                      session={t.active}
+                      history={t.history}
+                      onEdit={editSet}
+                      locked={t.locked}
+                    />
                   </View>
                 )}
                 {t.active &&
@@ -347,7 +354,13 @@ function TrainingApp() {
                 {t.active && slot >= 0 && completedSetCount(current) > 0 && (
                   <View style={s.card}>
                     <Label>THIS SESSION · {current.name.toUpperCase()}</Label>
-                    <SetRows exercise={current} history={t.history} onEdit={editSet} locked={t.locked} />
+                    <SetRows
+                      exercise={current}
+                      session={t.active}
+                      history={t.history}
+                      onEdit={editSet}
+                      locked={t.locked}
+                    />
                   </View>
                 )}
                 {t.active &&
