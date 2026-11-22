@@ -87,3 +87,27 @@ test('overload comparisons use the newest logged matching slot from a finished s
   assert.equal(changeFrom({ weight: 70, reps: 7 }, previousSet(history, 'row', 0)), '+5 lb · -1 rep');
   assert.equal(changeFrom({ weight: 65, reps: 8 }, previousSet(history, 'row', 0)), 'Matched');
 });
+
+test('set entry starts from the saved slot, latest exercise result, or zero', () => {
+  const { setEntryDefaults } = require('../data/progress.ts');
+  const [exercise, other] = createWorkoutExercises(sampleWorkout);
+  const earlier = { weight: 55, reps: 10 };
+  const recent = { weight: 57.25, reps: 8 };
+  const history = [
+    { exercises: [{ ...other, sets: [{ weight: 100, reps: 5 }] }, { ...exercise }] },
+    { exercises: [{ ...exercise, sets: [earlier, recent, null] }] },
+    { exercises: [{ ...exercise, sets: [{ weight: 50, reps: 12 }] }] },
+  ];
+
+  assert.deepEqual(setEntryDefaults(exercise, 0, history), {
+    initial: recent, reference: recent, referenceLabel: 'last time',
+  });
+  assert.deepEqual(setEntryDefaults(exercise, 0, [history[0]]).initial, { weight: 0, reps: 0 });
+
+  const logged = { weight: 0, reps: 0 };
+  const inProgress = { ...exercise, sets: [logged, null] };
+  assert.deepEqual(setEntryDefaults(inProgress, 1, history), {
+    initial: logged, reference: logged, referenceLabel: 'previous set',
+  });
+  assert.deepEqual(setEntryDefaults({ ...exercise, sets: [earlier, recent] }, 0, history).initial, earlier);
+});

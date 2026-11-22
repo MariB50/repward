@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Keyboard, Text, TextInput, View } from 'react-native';
 import { parseSetRecord, type SetRecord, type WorkoutExercise } from '../data/workoutSession';
-import { changeFrom } from '../data/progress';
+import type { SessionSnapshot } from '../data/workoutStorage';
+import { changeFrom, setEntryDefaults } from '../data/progress';
 import { Button, c, Label, Link, s } from './kit';
+import { NumberWheel } from './NumberWheel';
 
 export function SetEntry({
   exercise,
   index,
-  prior,
+  history,
   locked,
   busy,
   retry,
@@ -16,23 +18,33 @@ export function SetEntry({
 }: {
   exercise: WorkoutExercise;
   index: number;
-  prior: SetRecord | null;
+  history: SessionSnapshot[];
   locked: boolean;
   busy: boolean;
   retry: boolean;
   onSave: (record: SetRecord | null) => Promise<boolean>;
   onCancel?: () => void;
 }) {
-  const last = exercise.sets
-    .slice(0, index)
-    .filter((r): r is SetRecord => r !== null)
-    .at(-1);
-  const seed = exercise.sets[index] ?? prior ?? last;
-  const reference = prior ?? last;
-  const [weight, setWeight] = useState(seed ? String(seed.weight) : '');
-  const [reps, setReps] = useState(seed ? String(seed.reps) : '');
+  const { initial, reference, referenceLabel } = setEntryDefaults(exercise, index, history);
+  const [draft, setDraft] = useState(initial);
+  const [typed, setTyped] = useState<{ weight: string; reps: string } | null>(null);
   const [error, setError] = useState('');
-  const input = parseSetRecord(weight, reps);
+  const input = typed ? parseSetRecord(typed.weight, typed.reps) : draft;
+
+  function toggleEntry() {
+    setError('');
+    if (typed) {
+      if (input) setDraft(input);
+      setTyped(null);
+      Keyboard.dismiss();
+    } else {
+      setTyped({
+        weight: draft.weight.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 17 }),
+        reps: String(draft.reps),
+      });
+    }
+  }
+
   async function submit() {
     if (!input && !retry) {
       setError('Enter a weight of zero or more and a whole number of reps.');
@@ -53,56 +65,67 @@ export function SetEntry({
       <Text style={s.title}>{exercise.name}</Text>
       {reference && (
         <Text style={s.body}>
-          {prior ? 'Last time' : 'Previous set'} · {reference.weight} lb × {reference.reps} reps
+          {referenceLabel === 'last time' ? 'Last time' : 'Previous set'} · {reference.weight} lb × {reference.reps} reps
         </Text>
       )}
       <View style={s.row}>
         <View style={{ flex: 1, gap: 7 }}>
           <Label>WEIGHT (LB)</Label>
-          <TextInput
-            selectTextOnFocus
-            editable={!locked}
-            accessibilityLabel="Weight in pounds"
-            keyboardType="decimal-pad"
-            style={s.input}
-            value={weight}
-            onChangeText={setWeight}
-            placeholder="0"
-            placeholderTextColor="#808B9E"
-          />
+          {typed ? (
+            <TextInput
+              selectTextOnFocus
+              editable={!locked}
+              accessibilityLabel="Weight in pounds"
+              keyboardType="decimal-pad"
+              style={s.input}
+              value={typed.weight}
+              onChangeText={(weight) => setTyped({ ...typed, weight })}
+            />
+          ) : (
+            <NumberWheel
+              label="Weight in pounds"
+              value={draft.weight}
+              step={2.5}
+              max={1000}
+              disabled={locked}
+              onChange={(weight) => setDraft((current) => ({ ...current, weight }))}
+            />
+          )}
         </View>
         <View style={{ flex: 1, gap: 7 }}>
           <Label>REPS</Label>
-          <TextInput
-            selectTextOnFocus
-            editable={!locked}
-            accessibilityLabel="Repetitions"
-            keyboardType="number-pad"
-            style={s.input}
-            value={reps}
-            onChangeText={setReps}
-            placeholder="0"
-            placeholderTextColor="#808B9E"
-          />
+          {typed ? (
+            <TextInput
+              selectTextOnFocus
+              editable={!locked}
+              accessibilityLabel="Repetitions"
+              keyboardType="number-pad"
+              style={s.input}
+              value={typed.reps}
+              onChangeText={(reps) => setTyped({ ...typed, reps })}
+            />
+          ) : (
+            <NumberWheel
+              label="Repetitions"
+              value={draft.reps}
+              step={1}
+              max={100}
+              disabled={locked}
+              onChange={(reps) => setDraft((current) => ({ ...current, reps }))}
+            />
+          )}
         </View>
       </View>
-      <View style={s.row}>
-        <Button secondary disabled={locked} onPress={() => setWeight(String((Number(weight) || 0) + 5))}>
-          +5 lb
-        </Button>
-        <Button
-          secondary
-          disabled={locked}
-          onPress={() => setReps(String((parseInt(reps, 10) || 0) + 1))}
-        >
-          +1 rep
-        </Button>
+      <View style={[s.between, { justifyContent: 'flex-end' }]}>
+        {input && reference && (
+          <Text style={[s.body, { color: c.blue, flex: 1 }]}>
+            {changeFrom(input, reference)} vs. {referenceLabel}
+          </Text>
+        )}
+        <Link disabled={locked} onPress={toggleEntry}>
+          {typed ? 'Use wheels' : 'Type values'}
+        </Link>
       </View>
-      {input && reference && (
-        <Text style={[s.body, { color: c.blue }]}>
-          {changeFrom(input, reference)} vs. {prior ? 'last time' : 'previous set'}
-        </Text>
-      )}
       {!!error && (
         <Text accessibilityRole="alert" style={s.error}>
           {error}

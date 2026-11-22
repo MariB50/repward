@@ -15,7 +15,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { WorkoutPlan } from './data/sampleWorkout';
 import { useTraining } from './data/useTraining';
 import { completedSetCount, createWorkoutExercises } from './data/workoutSession';
-import { previousSet, sessionTotals } from './data/progress';
+import { sessionTotals } from './data/progress';
 import { Brand, Button, c, Icon, Label, Link, s } from './ui/kit';
 import { RestTimer } from './ui/RestTimer';
 import { RoutineEditor } from './ui/RoutineEditor';
@@ -299,7 +299,7 @@ function TrainingApp() {
                     key={t.active.id + current.id + ':' + slot}
                     exercise={current}
                     index={slot}
-                    prior={previousSet(t.history, current.id, slot)}
+                    history={t.history}
                     busy={t.busy}
                     locked={t.locked}
                     retry={t.retrySet}

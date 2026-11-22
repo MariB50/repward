@@ -1,5 +1,25 @@
 import type { SessionSnapshot } from './workoutStorage';
-import type { SetRecord } from './workoutSession';
+import type { SetRecord, WorkoutExercise } from './workoutSession';
+
+function lastLoggedSet(history: SessionSnapshot[], exerciseId: string): SetRecord | null {
+  for (const session of history) {
+    const recent = session.exercises
+      .find((exercise) => exercise.id === exerciseId)
+      ?.sets.findLast((set) => set !== null);
+    if (recent) return recent;
+  }
+  return null;
+}
+
+export function setEntryDefaults(exercise: WorkoutExercise, index: number, history: SessionSnapshot[]) {
+  const previous = exercise.sets.slice(0, index).findLast((set) => set !== null);
+  const reference = previous ?? lastLoggedSet(history, exercise.id);
+  return {
+    initial: exercise.sets[index] ?? reference ?? { weight: 0, reps: 0 },
+    reference,
+    referenceLabel: previous ? 'previous set' : 'last time',
+  };
+}
 
 export function previousSet(history: SessionSnapshot[], exerciseId: string, index: number) {
   for (const session of history) {
