@@ -16,6 +16,7 @@ export function SetEntry({
   retry,
   onSave,
   onCancel,
+  onSkip,
 }: {
   exercise: WorkoutExercise;
   index: number;
@@ -26,6 +27,7 @@ export function SetEntry({
   retry: boolean;
   onSave: (record: SetRecord | null) => Promise<boolean>;
   onCancel?: () => void;
+  onSkip?: () => void;
 }) {
   const { initial, reference, referenceLabel, goal } = useMemo(
     () => setEntryDefaults(exercise, index, history, session),
@@ -150,6 +152,11 @@ export function SetEntry({
       {onCancel && (
         <Link disabled={locked} onPress={onCancel}>
           Cancel edit
+        </Link>
+      )}
+      {onSkip && (
+        <Link disabled={locked} onPress={onSkip} icon="arrow">
+          Skip exercise for now
         </Link>
       )}
     </View>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,7 +15,7 @@ import { randomUUID } from 'expo-crypto';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import type { WorkoutPlan } from './data/sampleWorkout';
 import { useTraining } from './data/useTraining';
-import { completedSetCount, createWorkoutExercises } from './data/workoutSession';
+import { completedSetCount, createWorkoutExercises, nextUnfinishedExercise } from './data/workoutSession';
 import { sessionDurationText, sessionTotals } from './data/progress';
 import { Brand, Button, c, Icon, Label, Link, s } from './ui/kit';
 import { RestTimer } from './ui/RestTimer';
@@ -51,6 +52,7 @@ function TrainingApp() {
     exercises.find((e) => completedSetCount(e) < e.plannedSets) ??
     exercises[0];
   const slot = editingSet ?? current.sets.findIndex((r) => r === null);
+  const nextExercise = t.active ? nextUnfinishedExercise(exercises, current.id) : undefined;
   const editSet = (index: number) => {
     setSelected(current.id);
     setEditingSet(index);
@@ -61,6 +63,12 @@ function TrainingApp() {
   const date = today.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const activeTab = page === 'summary' ? 'history' : page === 'routine' ? editor?.back : page;
   const top = () => scroll.current?.scrollTo({ y: 0, animated: false });
+  function selectExercise(id: string) {
+    Keyboard.dismiss();
+    setEditingSet(null);
+    setSelected(id);
+    top();
+  }
   function navigate(next: Page) {
     if (t.busy || t.retrySet) return;
     setConfirm(false);
@@ -305,6 +313,9 @@ function TrainingApp() {
                     locked={t.locked}
                     retry={t.retrySet}
                     onCancel={editingSet === null ? undefined : () => setEditingSet(null)}
+                    onSkip={
+                      editingSet === null && nextExercise ? () => selectExercise(nextExercise.id) : undefined
+                    }
                     onSave={async (record) => {
                       const ok = await t.save(current.id, slot, record);
                       if (ok) {
@@ -313,7 +324,7 @@ function TrainingApp() {
                           editingSet === null &&
                           completedSetCount(current) + 1 === current.plannedSets
                         )
-                          setSelected(null);
+                          setSelected(nextExercise?.id ?? null);
                       }
                       return ok;
                     }}
@@ -345,11 +356,7 @@ function TrainingApp() {
                   selected={current.id}
                   locked={t.locked}
                   onEdit={() => editWorkout(t.plan)}
-                  onSelect={(id) => {
-                    setEditingSet(null);
-                    setSelected(id);
-                    top();
-                  }}
+                  onSelect={selectExercise}
                 />
                 {t.active && slot >= 0 && completedSetCount(current) > 0 && (
                   <View style={s.card}>

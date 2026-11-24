@@ -21,6 +21,16 @@ export function completedSetCount(exercise: WorkoutExercise): number {
   return exercise.sets.filter((set) => set !== null).length;
 }
 
+export function nextUnfinishedExercise(exercises: WorkoutExercise[], currentId: string) {
+  const currentIndex = exercises.findIndex((exercise) => exercise.id === currentId);
+  if (currentIndex === -1) return;
+
+  for (let offset = 1; offset < exercises.length; offset++) {
+    const exercise = exercises[(currentIndex + offset) % exercises.length];
+    if (exercise.sets.includes(null)) return exercise;
+  }
+}
+
 export function parseSetRecord(weightText: string, repsText: string): SetRecord | null {
   const weightInput = weightText.trim();
   const repsInput = repsText.trim();

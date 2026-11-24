@@ -4,6 +4,7 @@ const { sampleWorkout } = require('../data/sampleWorkout.ts');
 const {
   completedSetCount,
   createWorkoutExercises,
+  nextUnfinishedExercise,
   parseSetRecord,
   recordSet,
 } = require('../data/workoutSession.ts');
@@ -44,6 +45,25 @@ test('interleaved exercise saves preserve earlier sets and previous state', () =
   assert.equal(completedSetCount(afterSecondBench[1]), 1);
   record.reps = 99;
   assert.equal(afterBench[0].sets[0].reps, 10);
+});
+
+test('moving on skips completed exercises and wraps back to unfinished ones', () => {
+  const exercises = createWorkoutExercises({
+    ...sampleWorkout,
+    exercises: [...sampleWorkout.exercises, { id: 'pulldown', name: 'Pulldown', plannedSets: 1 }],
+  });
+  const [bench, row, pulldown] = exercises;
+  const set = { weight: 50, reps: 10 };
+  const afterBench = recordSet(exercises, bench.id, set);
+  const afterRow = recordSet(recordSet(afterBench, row.id, set), row.id, set);
+
+  assert.equal(nextUnfinishedExercise(afterBench, bench.id)?.id, row.id);
+  assert.equal(nextUnfinishedExercise(afterRow, bench.id)?.id, pulldown.id);
+  assert.equal(nextUnfinishedExercise(afterRow, row.id)?.id, pulldown.id);
+  assert.deepEqual(nextUnfinishedExercise(afterRow, pulldown.id)?.sets, [set, null]);
+
+  const afterPulldown = recordSet(afterRow, pulldown.id, set);
+  assert.equal(nextUnfinishedExercise(afterPulldown, bench.id), undefined);
 });
 
 test('zero reps count as saved and a completed exercise cannot get extra sets', () => {
