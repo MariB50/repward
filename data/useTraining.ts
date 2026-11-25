@@ -4,7 +4,7 @@ import { openWorkoutStorage } from './openWorkoutStorage';
 import { createWorkoutStartup } from './workoutStartup';
 import { createWorkoutSetSaver } from './workoutSetSaver';
 import { sampleWorkout, type WorkoutPlan } from './sampleWorkout';
-import { readWorkoutLibrary, updateWorkoutPlan } from './workoutLibrary';
+import { readWorkoutLibrary, updateWorkoutPlan, type WorkoutLibrary } from './workoutLibrary';
 import { createWorkoutExercises, type SetRecord } from './workoutSession';
 import type { SessionSnapshot } from './workoutStorage';
 import { allowRestAlerts, updateRestAlert } from './restAlerts';
@@ -18,9 +18,13 @@ function createConnection(closing: Promise<void>) {
     const storage = await startup.prepare();
     await storage.saveSet(r.sessionId, r.exerciseId, r.setNumber, r.record, r.restUntil);
   });
-  return { startup, saver };
+  return { startup, saver, pendingSelection: null as Promise<boolean> | null };
 }
 type Connection = ReturnType<typeof createConnection>;
+
+function selectedPlan(library: WorkoutLibrary) {
+  return library.plans.find((plan) => plan.id === library.selectedId) ?? library.plans[0];
+}
 
 export function useTraining() {
   const live = useRef<Connection | null>(null);
@@ -32,7 +36,9 @@ export function useTraining() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [library, setLibrary] = useState(() => readWorkoutLibrary({}, sampleWorkout));
-  const plan = library.plans.find((item) => item.id === library.selectedId) ?? library.plans[0];
+  const currentLibrary = useRef(library);
+  const savedLibrary = useRef(library);
+  const plan = selectedPlan(library);
   const [duration, setDuration] = useState(90);
   const [alerts, setAlerts] = useState(false);
   const [active, setActive] = useState<SessionSnapshot | null>(null);
@@ -49,7 +55,9 @@ export function useTraining() {
       const [sessions, prefs] = await Promise.all([storage.readSessions(), storage.readPreferences()]);
       if (live.current !== conn) return;
       const current = sessions[0] && !sessions[0].endedAt ? sessions[0] : null;
-      setLibrary(readWorkoutLibrary(prefs, sampleWorkout));
+      const loaded = readWorkoutLibrary(prefs, sampleWorkout);
+      savedLibrary.current = loaded;
+      showLibrary(loaded);
       setDuration(Number(prefs.rest) || 90);
       setAlerts(prefs.alerts === 'on');
       setActive(current);
@@ -62,12 +70,13 @@ export function useTraining() {
       live.current = null;
       closing.current = (async () => {
         await conn.saver.close();
+        await conn.pendingSelection;
         await conn.startup.close();
       })().catch(() => undefined);
     };
   }, [attempt]);
 
-  async function run(message: string, task: (conn: Connection) => Promise<void>, allowPending = false) {
+  async function run(message: string, task: (conn: Connection) => Promise<void | false>, allowPending = false) {
     const conn = live.current;
     if (!ready || !conn || working.current || (conn.saver.hasPending() && !allowPending)) return false;
     working.current = true;
@@ -75,8 +84,7 @@ export function useTraining() {
     setError('');
     setNotice('');
     try {
-      await task(conn);
-      return live.current === conn;
+      return (await task(conn)) !== false && live.current === conn;
     } catch {
       if (live.current === conn) setError(message);
       return false;
@@ -100,6 +108,8 @@ export function useTraining() {
   function start() {
     return run('Couldn’t start this workout. Try again.', async (conn) => {
       if (active) return;
+      if (conn.pendingSelection && !(await conn.pendingSelection)) return false;
+      if (live.current !== conn || selectedPlan(currentLibrary.current) !== plan) return false;
       const startedAt = new Date().toISOString();
       const id = await conn.startup.start(plan, startedAt);
       if (live.current === conn)
@@ -173,20 +183,52 @@ export function useTraining() {
       await notify(null, alerts);
     });
   }
-  function persistLibrary(next: typeof library, message: string) {
-    return run(message, async (conn) => {
-      await (await conn.startup.prepare()).setPreference('workouts', JSON.stringify(next));
-      if (live.current === conn) setLibrary(next);
-    });
+  function showLibrary(next: WorkoutLibrary) {
+    currentLibrary.current = next;
+    setLibrary(next);
+  }
+  async function writeLibrary(conn: Connection, next: WorkoutLibrary) {
+    const storage = await conn.startup.prepare();
+    await storage.setPreference('workouts', JSON.stringify(next));
+    if (live.current === conn) savedLibrary.current = next;
   }
   function savePlan(next: WorkoutPlan, select: boolean) {
-    return persistLibrary(
-      updateWorkoutPlan(library, next, select),
-      'Couldn’t save this workout. Try again.',
-    );
+    return run('Couldn’t save this workout. Try again.', async (conn) => {
+      await conn.pendingSelection;
+      if (live.current !== conn) return false;
+      const updated = updateWorkoutPlan(currentLibrary.current, next, select);
+      await writeLibrary(conn, updated);
+      if (live.current !== conn) return false;
+      showLibrary(updated);
+      if (select) setError('');
+    });
   }
   function selectPlan(id: string) {
-    return persistLibrary({ ...library, selectedId: id }, 'Couldn’t select this workout. Try again.');
+    const conn = live.current;
+    const current = currentLibrary.current;
+    if (!ready || !conn || active || working.current || conn.saver.hasPending()) return false;
+    if (current.selectedId === id || !current.plans.some((plan) => plan.id === id)) return false;
+
+    const message = 'Couldn’t select this workout. Try again.';
+    const next = { ...current, selectedId: id };
+    setError((previous) => previous === message ? '' : previous);
+    showLibrary(next);
+
+    // Storage queues these writes in order. Only the latest failed choice can roll back the screen.
+    const selection = writeLibrary(conn, next).then(
+      () => true,
+      () => {
+        if (live.current === conn && currentLibrary.current === next) {
+          showLibrary(savedLibrary.current);
+          setError(message);
+        }
+        return false;
+      },
+    ).finally(() => {
+      if (conn.pendingSelection === selection) conn.pendingSelection = null;
+    });
+    conn.pendingSelection = selection;
+    return true;
   }
   function setRest(until: number | null) {
     return run('Couldn’t update the rest timer. Try again.', async (conn) => {

@@ -82,11 +82,8 @@ function TrainingApp() {
     setEditor({ plan: plan ?? { id: randomUUID(), name: '', exercises: [] }, back });
     navigate('routine');
   }
-  async function selectWorkout(id: string) {
-    if (id === t.plan.id || (await t.selectPlan(id))) {
-      if (id !== t.plan.id) setSelected(null);
-      navigate('training');
-    }
+  function selectWorkout(id: string) {
+    if (t.selectPlan(id)) setSelected(null);
   }
   useEffect(() => {
     top();
@@ -407,6 +404,7 @@ function TrainingApp() {
               inSession={!!t.active}
               locked={t.locked}
               onSelect={selectWorkout}
+              onOpen={() => navigate('training')}
               onEdit={editWorkout}
             />
           )}
