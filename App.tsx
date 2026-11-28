@@ -18,7 +18,7 @@ import { useTraining } from './data/useTraining';
 import { completedSetCount, createWorkoutExercises, nextUnfinishedExercise } from './data/workoutSession';
 import { sessionDurationText, sessionTotals } from './data/progress';
 import { Brand, Button, c, Icon, Label, Link, s } from './ui/kit';
-import { ExerciseProgress } from './ui/ExerciseProgress';
+import { ProgressScreen } from './ui/ProgressScreen';
 import { RestTimer } from './ui/RestTimer';
 import { RoutineEditor } from './ui/RoutineEditor';
 import { SetEntry } from './ui/SetEntry';
@@ -407,9 +407,7 @@ function TrainingApp() {
             />
           )}
           {page === 'progress' && t.ready && (
-            <View style={{ width: '100%', maxWidth: 760 }}>
-              <ExerciseProgress history={t.history} onTrain={() => navigate('training')} />
-            </View>
+            <ProgressScreen history={t.history} active={t.active} onTrain={() => navigate('training')} />
           )}
           {page === 'routine' && editor && (
             <View style={{ width: '100%', maxWidth: 720 }}>

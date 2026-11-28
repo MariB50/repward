@@ -164,9 +164,13 @@ function ExerciseTrendCard({ trend, onChoose }: { trend: ExerciseTrend; onChoose
   );
 }
 
-export function ExerciseProgress({ history, onTrain }: { history: SessionSnapshot[]; onTrain: () => void }) {
+export function ExerciseProgress({ history, selectedId, onSelect, onTrain }: {
+  history: SessionSnapshot[];
+  selectedId: string | undefined;
+  onSelect: (id: string) => void;
+  onTrain: () => void;
+}) {
   const trends = useMemo(() => exerciseTrends(history), [history]);
-  const [selectedId, setSelectedId] = useState<string>();
   const [choosing, setChoosing] = useState(false);
   const selected = trends.find(({ id }) => id === selectedId) ?? trends[0];
 
@@ -207,7 +211,7 @@ export function ExerciseProgress({ history, onTrain }: { history: SessionSnapsho
                     accessibilityRole="button"
                     accessibilityState={{ selected: item.id === selected.id }}
                     onPress={() => {
-                      setSelectedId(item.id);
+                      onSelect(item.id);
                       setChoosing(false);
                     }}
                     style={({ pressed }) => [s.between, {
