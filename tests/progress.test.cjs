@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { exerciseProgress, parseRepRange, setEntryDefaults, suggestedWeight } = require('../data/progress.ts');
+const { exerciseProgress, exerciseTrends, parseRepRange, setEntryDefaults, suggestedWeight } = require('../data/progress.ts');
 
 const workout = { name: 'Push day', planId: 'push', repRange: { min: 8, max: 12 } };
 const set = (weight, reps) => ({ weight, reps });
@@ -142,4 +142,36 @@ test('more reps at the usual weight can raise an outstanding suggestion', () => 
     target: set(110, null),
     workingWeight: 100,
   });
+});
+
+test('exercise trends keep one completed top set per workout across routines and legacy logs', () => {
+  const first = session([set(80, 10)], { id: 'first', startedAt: null, planId: undefined });
+  const latest = session([set(90, 8), set(90, 9), set(125, 0), null], {
+    id: 'latest',
+    name: 'Upper body',
+    planId: 'upper',
+    endedAt: '2026-11-24T10:00:00.000Z',
+  });
+  assert.deepEqual(exerciseTrends([first, latest]), [{
+    id: 'bench',
+    name: 'Bench press',
+    workouts: [
+      { sessionId: 'latest', workoutName: 'Upper body', date: Date.parse(latest.endedAt), topSet: set(90, 9) },
+      { sessionId: 'first', workoutName: 'Push day', date: Date.parse(first.endedAt), topSet: set(80, 10) },
+    ],
+  }]);
+});
+
+test('exercise trends include bodyweight reps and skip empty or unfinished workouts', () => {
+  const bodyweight = session([], {
+    id: 'saved',
+    exercises: [
+      { ...exercise([set(0, 4), set(0, 7)]), id: 'pull-up', name: 'Pull-up' },
+      exercise([null, set(90, 0)]),
+    ],
+  });
+  const unfinished = session([set(100, 10)], { endedAt: null });
+  const trends = exerciseTrends([unfinished, bodyweight]);
+  assert.deepEqual(trends.map(({ id }) => id), ['pull-up']);
+  assert.deepEqual(trends[0].workouts[0].topSet, set(0, 7));
 });

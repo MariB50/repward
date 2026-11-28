@@ -159,6 +159,48 @@ export function previousSet(history: SessionSnapshot[], exerciseId: string, inde
   return null;
 }
 
+type ExerciseWorkout = {
+  sessionId: string;
+  workoutName: string;
+  date: number;
+  topSet: SetRecord;
+};
+
+export type ExerciseTrend = {
+  id: string;
+  name: string;
+  workouts: ExerciseWorkout[];
+};
+
+export function exerciseTrends(history: SessionSnapshot[]) {
+  const workouts = history
+    .map((session) => ({ session, date: Date.parse(session.endedAt ?? '') }))
+    .filter(({ date }) => Number.isFinite(date))
+    .sort((a, b) => b.date - a.date);
+  const trends = new Map<string, ExerciseTrend>();
+
+  for (const { session, date } of workouts) {
+    for (const exercise of session.exercises) {
+      let topSet: SetRecord | undefined;
+      for (const set of exercise.sets) {
+        if (!set?.reps) continue;
+        if (!topSet || set.weight > topSet.weight || (set.weight === topSet.weight && set.reps > topSet.reps)) {
+          topSet = set;
+        }
+      }
+      if (!topSet) continue;
+
+      let trend = trends.get(exercise.id);
+      if (!trend) {
+        trend = { id: exercise.id, name: exercise.name, workouts: [] };
+        trends.set(exercise.id, trend);
+      }
+      trend.workouts.push({ sessionId: session.id, workoutName: session.name, date, topSet });
+    }
+  }
+  return [...trends.values()];
+}
+
 export function changeFrom(current: SetRecord, prior: SetRecord) {
   const weight = Number((current.weight - prior.weight).toFixed(3));
   const reps = current.reps - prior.reps;

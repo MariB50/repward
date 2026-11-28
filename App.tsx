@@ -18,17 +18,19 @@ import { useTraining } from './data/useTraining';
 import { completedSetCount, createWorkoutExercises, nextUnfinishedExercise } from './data/workoutSession';
 import { sessionDurationText, sessionTotals } from './data/progress';
 import { Brand, Button, c, Icon, Label, Link, s } from './ui/kit';
+import { ExerciseProgress } from './ui/ExerciseProgress';
 import { RestTimer } from './ui/RestTimer';
 import { RoutineEditor } from './ui/RoutineEditor';
 import { SetEntry } from './ui/SetEntry';
 import { ExerciseList, Hero, SessionDetails, SetRows, WeekCard } from './ui/TrainingCards';
 import { WorkoutLibrary } from './ui/WorkoutLibrary';
 
-type Page = 'training' | 'workouts' | 'history' | 'routine' | 'summary';
+type Page = 'training' | 'workouts' | 'history' | 'progress' | 'routine' | 'summary';
 const tabs = [
   { page: 'training', label: 'Training', icon: 'bar' },
   { page: 'workouts', label: 'Workouts', icon: 'list' },
   { page: 'history', label: 'History', icon: 'history' },
+  { page: 'progress', label: 'Progress', icon: 'chart' },
 ] as const;
 
 function TrainingApp() {
@@ -89,7 +91,7 @@ function TrainingApp() {
     top();
   }, [page, detailId]);
   const nav = (
-    <View style={[s.row, { gap: 6, justifyContent: wide ? 'center' : 'space-evenly' }]}>
+    <View accessibilityRole="tablist" style={[s.row, { gap: 6, justifyContent: 'center' }]}>
       {tabs.map((item) => {
         const on = item.page === activeTab;
         return (
@@ -102,8 +104,12 @@ function TrainingApp() {
             style={({ pressed }) => [
               s.row,
               {
-                minHeight: 42,
-                paddingHorizontal: wide ? 18 : 10,
+                flex: wide ? undefined : 1,
+                flexDirection: wide ? 'row' : 'column',
+                justifyContent: 'center',
+                gap: wide ? 10 : 2,
+                minHeight: 46,
+                paddingHorizontal: wide ? 18 : 2,
                 borderRadius: 12,
                 backgroundColor: on ? c.pale : 'transparent',
                 opacity: pressed ? 0.65 : 1,
@@ -111,7 +117,7 @@ function TrainingApp() {
             ]}
           >
             <Icon name={item.icon} color={on ? c.blue : c.mute} size={19} />
-            <Text style={{ color: on ? c.blue : c.mute, fontWeight: '700', fontSize: 14 }}>
+            <Text style={{ color: on ? c.blue : c.mute, fontWeight: '700', fontSize: wide ? 14 : 12 }}>
               {item.label}
             </Text>
           </Pressable>
@@ -149,22 +155,14 @@ function TrainingApp() {
       <WeekCard history={t.history} onHistory={() => navigate('history')} />
     </View>
   );
-  const title =
-    page === 'routine'
-      ? editor?.plan.name
-        ? 'Edit workout'
-        : 'New workout'
-      : page === 'workouts'
-        ? 'My workouts'
-        : page === 'history'
-          ? detail
-            ? 'Workout details'
-            : 'Workout history'
-          : page === 'summary'
-            ? 'Workout saved'
-            : t.active
-              ? 'In session'
-              : 'Training dashboard';
+  const title = {
+    training: t.active ? 'In session' : 'Training dashboard',
+    workouts: 'My workouts',
+    history: detail ? 'Workout details' : 'Workout history',
+    progress: 'Progress',
+    routine: editor?.plan.name ? 'Edit workout' : 'New workout',
+    summary: 'Workout saved',
+  }[page];
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: c.white }}>
       <StatusBar style="dark" />
@@ -407,6 +405,11 @@ function TrainingApp() {
               onOpen={() => navigate('training')}
               onEdit={editWorkout}
             />
+          )}
+          {page === 'progress' && t.ready && (
+            <View style={{ width: '100%', maxWidth: 760 }}>
+              <ExerciseProgress history={t.history} onTrain={() => navigate('training')} />
+            </View>
           )}
           {page === 'routine' && editor && (
             <View style={{ width: '100%', maxWidth: 720 }}>
